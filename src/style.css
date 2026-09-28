@@ -12,6 +12,44 @@ body {
   inset: 0;
 }
 
+.notice {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(20, 20, 24, 0.88);
+  color: #fff;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.notice[hidden],
+.spinner[hidden] {
+  display: none;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 #panel {
   position: absolute;
   top: 12px;
@@ -33,6 +71,11 @@ body {
   flex-shrink: 0;
 }
 
+/* The panel's display rules would otherwise override the hidden attribute. */
+#panel [hidden] {
+  display: none;
+}
+
 #panel h1 {
   font-size: 16px;
   margin: 0;
@@ -51,6 +94,11 @@ body {
   gap: 6px;
 }
 
+#panel .buttons {
+  display: flex;
+  gap: 6px;
+}
+
 #panel .check output {
   margin-left: auto;
 }
@@ -58,18 +106,6 @@ body {
 #panel output {
   float: right;
   font-variant-numeric: tabular-nums;
-}
-
-.row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 6px;
-}
-
-.row select {
-  flex: 1;
-  min-width: 0;
 }
 
 .hint ol {
@@ -96,32 +132,6 @@ body {
   margin: 0;
   min-height: 1.4em;
   color: #fc6;
-}
-
-#panel fieldset {
-  border: 1px solid #444;
-  border-radius: 6px;
-  margin: 0;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-#panel details summary {
-  cursor: pointer;
-  color: #ccc;
-  font-size: 13px;
-}
-
-#panel details[open] {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-#panel fieldset[hidden] {
-  display: none;
 }
 
 .sample-marker.positive {

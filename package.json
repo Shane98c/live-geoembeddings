@@ -1,5 +1,5 @@
 {
-  "name": "live-classify",
+  "name": "live-geoembeddings",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,8 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@carbonplan/zarr-layer": "file:vendor/carbonplan-zarr-layer-0.10.0-live-classify.tgz",
-    "icechunk-js": "^0.6.0",
+    "@carbonplan/zarr-layer": "file:vendor/carbonplan-zarr-layer-0.10.0-live-geoembeddings.tgz",
     "maplibre-gl": "^5.0.0"
   },
   "devDependencies": {

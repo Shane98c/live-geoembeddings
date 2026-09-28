@@ -3,63 +3,58 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Live Classify</title>
+    <title>Live Geoembeddings</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="map"></div>
+    <div id="notice" class="notice" role="status" hidden>
+      <span id="notice-spinner" class="spinner" aria-hidden="true" hidden></span>
+      <span id="notice-text"></span>
+    </div>
     <aside id="panel">
-      <h1>Live Classify</h1>
+      <h1>Live Geoembeddings</h1>
       <div id="hint" class="hint"></div>
 
       <label>
         View
         <select id="mode">
-          <option value="classify" selected>Classify (train by example)</option>
-          <option value="similarity">Find similar spots</option>
+          <option value="similarity" selected>Find similar spots</option>
           <option value="rgb">Embeddings as color</option>
         </select>
       </label>
 
-      <fieldset id="classify-controls" hidden>
-        <label>
-          Name this class
-          <input id="class-name" type="text" placeholder="e.g. golf course, solar farm" />
-        </label>
-        <details id="background-details">
-          <summary id="background-summary"></summary>
-          <p class="hint">
-            Random spots of this NLCD land cover in view also count as "not
-            it". It is set from your first example; change it to whatever your
-            target is most often confused with.
-          </p>
-          <select id="background-class" aria-label="Compare against"></select>
-          <div class="row">
-            <span id="background-count"></span>
-            <label class="check">
-              <input id="show-background" type="checkbox" />
-              Show
-            </label>
-            <button id="resample" type="button">Resample</button>
-          </div>
-        </details>
-        <p id="model-stats" class="hint"></p>
-        <div class="row">
-          <button id="save" type="button">Save</button>
-          <button id="export" type="button">Export</button>
-          <button id="import" type="button">Import</button>
-          <input id="import-file" type="file" accept="application/json,.json" hidden />
-        </div>
-        <div class="row">
-          <select id="saved"></select>
-          <button id="load" type="button">Load</button>
-          <button id="delete" type="button">Delete</button>
-        </div>
-      </fieldset>
+      <label>
+        Embeddings
+        <select id="dataset">
+          <option value="aef" selected>AlphaEarth (Google, 64 dimensions)</option>
+          <option value="tessera">TESSERA (Cambridge, 128 dimensions)</option>
+        </select>
+      </label>
 
       <label>
-        <span id="threshold-label">Match threshold</span> <output id="threshold-value"></output>
+        Year
+        <select id="year"></select>
+      </label>
+
+      <label>
+        Imagery
+        <select id="imagery">
+          <option value="sentinel" selected>Sentinel-2, same year (EOX)</option>
+          <option value="aerial">Aerial photos (USGS)</option>
+        </select>
+      </label>
+      <p id="year-note" class="hint" hidden></p>
+
+      <label>
+        Match threshold <output id="threshold-value"></output>
         <input id="threshold" type="range" min="0.3" max="1" step="0.005" value="0.8" />
+      </label>
+
+      <label id="counter-controls">
+        <span>Counter-example strength <output id="counter-value"></output></span>
+        <input id="counter-strength" type="range" min="0" max="1" step="0.05" value="0.25" />
+        <span class="hint">How strongly red clicks steer the search away from what they look like.</span>
       </label>
 
       <label>
@@ -67,26 +62,27 @@
         <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.9" />
       </label>
 
-      <label>
-        <span class="check">
-          <input id="nlcd-visible" type="checkbox" />
-          NLCD 2025 land cover
-          <output id="nlcd-opacity-value"></output>
-        </span>
-        <input id="nlcd-opacity" type="range" min="0" max="1" step="0.05" value="0.6" />
+      <label class="check">
+        <input id="reference-visible" type="checkbox" checked />
+        Roads &amp; labels
       </label>
 
-      <div class="row">
-        <span id="samples">No samples</span>
+      <span id="samples">No samples</span>
+      <div class="buttons">
+        <button id="copy-link" type="button" title="Copy a link to this search" disabled>Copy link</button>
+        <button id="undo" type="button" title="Undo (Ctrl/Cmd+Z)" disabled>Undo</button>
         <button id="clear" type="button">Start over</button>
       </div>
 
       <p id="status" class="status"></p>
+      <p id="aerial-note" class="hint" hidden></p>
       <p class="attribution">
         The AlphaEarth Foundations Satellite Embedding dataset is produced by
-        Google and Google DeepMind (CC-BY 4.0), 2025 embeddings via
-        <a href="https://source.coop/tge-labs/aef-mosaic">source.coop</a>. Land
-        cover: USGS Annual NLCD 2025.
+        Google and Google DeepMind (CC-BY 4.0), via
+        <a href="https://source.coop/tge-labs/aef-mosaic">source.coop</a>.
+        TESSERA embeddings by the University of Cambridge, via
+        <a href="https://source.coop/tessera/tessera">source.coop</a>.
+        Sentinel-2 cloudless imagery by EOX (CC BY-NC-SA 4.0).
       </p>
     </aside>
     <script type="module" src="/src/main.ts"></script>

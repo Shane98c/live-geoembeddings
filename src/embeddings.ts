@@ -1,8 +1,6 @@
 import type { ZarrLayer } from "@carbonplan/zarr-layer";
 
 export const NUM_BANDS = 64;
-// Pixel size of the AEF mosaic in degrees (spatial:transform).
-const PIXEL_DEG = 8.983111749910169e-5;
 
 const dequantize = (v: number) => Math.sign(v) * (v / 127.5) ** 2;
 
@@ -37,27 +35,4 @@ export async function readPoint(
     { includeSpatialCoordinates: false },
   );
   return toEmbeddings(result)[0] ?? null;
-}
-
-/** Embeddings of the (2r+1)x(2r+1) pixels centered on a point. */
-export async function readPatch(
-  layer: ZarrLayer,
-  lng: number,
-  lat: number,
-  radius = 1,
-): Promise<number[][]> {
-  const h = (radius + 0.5) * PIXEL_DEG;
-  const ring = [
-    [lng - h, lat - h],
-    [lng + h, lat - h],
-    [lng + h, lat + h],
-    [lng - h, lat + h],
-    [lng - h, lat - h],
-  ];
-  const result = await layer.queryData(
-    { type: "Polygon", coordinates: [ring] },
-    undefined,
-    { includeSpatialCoordinates: false },
-  );
-  return toEmbeddings(result);
 }

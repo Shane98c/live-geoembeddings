@@ -1,84 +1,125 @@
 import maplibregl from "maplibre-gl";
 import { ZarrLayer } from "@carbonplan/zarr-layer";
-import { createNlcdLayer, NLCD_CLASSES } from "./nlcd";
-import { NUM_BANDS, readPatch, readPoint } from "./embeddings";
-import { trainLogistic, type Example, type Model } from "./classifier";
+import { NUM_BANDS, readPoint } from "./embeddings";
 import {
-  nlcdClassAt,
-  sampleBackground,
-  type BackgroundSample,
-} from "./background";
-import {
-  deleteSaved,
-  downloadTraining,
-  listSaved,
-  loadCurrent,
-  loadSaved,
-  readTrainingFile,
-  saveCurrent,
-  saveTraining,
-  type Training,
-} from "./trainings";
-
+  decodeSearch,
+  encodeSearch,
+  SHARE_PREFIX,
+  type Dataset,
+} from "./share";
+import { readTesseraPoint, TESSERA_BANDS, TesseraLayers } from "./tessera";
 const SOURCE = "https://data.source.coop/tge-labs/aef-mosaic";
 const YEAR_ORIGIN = 2017;
-// The latest AEF year, matching the NLCD 2025 land cover shown beneath it.
-const YEAR = 2025;
+const LATEST_YEAR = 2025;
 // Full-resolution only (no pyramid): each 256px region is 4 MB of int8 bands
 // and ~2.3 MB to download, and a zoom-12 viewport is ~50 regions.
 const MIN_ZOOM = 12;
+// TESSERA stores 128 bytes a pixel, and a zoom 12 view is ~500 MB of it.
+const TESSERA_MIN_ZOOM = 13;
 // Band indices for the false-color view, following Google's AEF examples.
 const RGB_BANDS = [1, 16, 9];
-const BACKGROUND_COUNT = 200;
-// Background pixels are unlabeled guesses from NLCD, so they count for less
-// than a pixel the user marked.
-const BACKGROUND_WEIGHT = 0.3;
+
+// Roads and place names from OpenStreetMap, drawn above the data layers.
+const NAME = ["coalesce", ["get", "name:en"], ["get", "name"]];
+const REFERENCE_LAYERS: maplibregl.LayerSpecification[] = [
+  {
+    id: "roads",
+    type: "line",
+    source: "osm",
+    "source-layer": "transportation",
+    minzoom: 6,
+    filter: [
+      "in",
+      ["get", "class"],
+      [
+        "literal",
+        ["motorway", "trunk", "primary", "secondary", "tertiary", "minor"],
+      ],
+    ],
+    paint: {
+      "line-color": "rgba(255, 255, 255, 0.55)",
+      "line-width": ["interpolate", ["linear"], ["zoom"], 6, 0.4, 12, 1, 16, 3],
+    },
+  },
+  {
+    id: "road-names",
+    type: "symbol",
+    source: "osm",
+    "source-layer": "transportation_name",
+    minzoom: 13,
+    layout: {
+      "symbol-placement": "line",
+      "text-field": NAME,
+      "text-font": ["Noto Sans Regular"],
+      "text-size": 11,
+    },
+    paint: {
+      "text-color": "#fff",
+      "text-halo-color": "rgba(0, 0, 0, 0.7)",
+      "text-halo-width": 1.2,
+    },
+  },
+  {
+    id: "place-names",
+    type: "symbol",
+    source: "osm",
+    "source-layer": "place",
+    filter: [
+      "in",
+      ["get", "class"],
+      ["literal", ["city", "town", "village", "hamlet"]],
+    ],
+    layout: {
+      "text-field": NAME,
+      "text-font": ["Noto Sans Regular"],
+      "text-size": ["match", ["get", "class"], "city", 15, "town", 13, 11],
+    },
+    paint: {
+      "text-color": "#fff",
+      "text-halo-color": "rgba(0, 0, 0, 0.75)",
+      "text-halo-width": 1.4,
+    },
+  },
+] as maplibregl.LayerSpecification[];
+const FIRST_REFERENCE_LAYER = REFERENCE_LAYERS[0].id;
 
 const BAND_INDICES = Array.from({ length: NUM_BANDS }, (_, i) => i);
 const queryUniform = (i: number) => `u_q${i}`;
-const MODES = { rgb: 0, similarity: 1, classify: 2 } as const;
+const MODES = { rgb: 0, similarity: 1 } as const;
 type Mode = keyof typeof MODES;
 
 const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
 const modeSelect = $<HTMLSelectElement>("mode");
+const datasetSelect = $<HTMLSelectElement>("dataset");
 const hint = $<HTMLDivElement>("hint");
 const threshold = $<HTMLInputElement>("threshold");
-const thresholdLabel = $<HTMLSpanElement>("threshold-label");
 const thresholdValue = $<HTMLOutputElement>("threshold-value");
 const opacity = $<HTMLInputElement>("opacity");
 const opacityValue = $<HTMLOutputElement>("opacity-value");
 const samplesLabel = $<HTMLSpanElement>("samples");
 const clearButton = $<HTMLButtonElement>("clear");
 const status = $<HTMLParagraphElement>("status");
-const classifyControls = $<HTMLFieldSetElement>("classify-controls");
-const className = $<HTMLInputElement>("class-name");
-const backgroundClass = $<HTMLSelectElement>("background-class");
-const backgroundCount = $<HTMLSpanElement>("background-count");
-const resampleButton = $<HTMLButtonElement>("resample");
-const showBackground = $<HTMLInputElement>("show-background");
-const backgroundSummary = $<HTMLElement>("background-summary");
-const modelStats = $<HTMLParagraphElement>("model-stats");
-const saveButton = $<HTMLButtonElement>("save");
-const exportButton = $<HTMLButtonElement>("export");
-const importButton = $<HTMLButtonElement>("import");
-const importFile = $<HTMLInputElement>("import-file");
-const savedSelect = $<HTMLSelectElement>("saved");
-const loadButton = $<HTMLButtonElement>("load");
-const deleteButton = $<HTMLButtonElement>("delete");
+const undoButton = $<HTMLButtonElement>("undo");
+const copyLinkButton = $<HTMLButtonElement>("copy-link");
+const yearSelect = $<HTMLSelectElement>("year");
+const imagerySelect = $<HTMLSelectElement>("imagery");
+const yearNote = $<HTMLParagraphElement>("year-note");
+const aerialNote = $<HTMLParagraphElement>("aerial-note");
+for (let y = LATEST_YEAR; y >= YEAR_ORIGIN; y--) yearSelect.add(new Option(String(y)));
+const counterControls = $<HTMLLabelElement>("counter-controls");
+const counterStrength = $<HTMLInputElement>("counter-strength");
+const counterValue = $<HTMLOutputElement>("counter-value");
 
-for (const { code, name } of NLCD_CLASSES) {
-  backgroundClass.add(new Option(`${code} ${name}`, String(code)));
-}
-backgroundClass.value = "42";
-
-// Restore the in-progress training before the layer and map read the year
-// and view from the page.
-const restored = loadCurrent();
-if (restored) {
-  className.value = restored.name;
-  backgroundClass.value = String(restored.backgroundClass);
+// A shared similarity search in the URL takes over the view and mode.
+const shared = location.hash.startsWith(SHARE_PREFIX)
+  ? decodeSearch(location.hash.slice(SHARE_PREFIX.length))
+  : null;
+if (shared) {
+  modeSelect.value = "similarity";
+  datasetSelect.value = shared.dataset;
+  yearSelect.value = String(shared.year);
 }
 
 // Raw int8 values arrive as floats (fill already NaN). Dequantize with
@@ -92,15 +133,13 @@ const dotTerms = BAND_INDICES.map(
 
 const [r, g, b] = RGB_BANDS.map((i) => dequant(`band_${i}`));
 
-// The finding modes draw nothing until there is a query, so the imagery shows
-// through. Similarity mode scores the dot product with a query embedding; classify
-// mode scores sigmoid(dot + bias) with the trained weights in the same
-// uniforms, so both highlight pixels whose score clears the threshold.
+// Similarity mode draws nothing until there is a query, so the imagery shows
+// through; then it scores the dot product with the query embedding and
+// highlights pixels whose score clears the threshold.
 const customFrag = `
   uniform float u_mode;
   uniform float u_threshold;
   uniform float u_hasQuery;
-  uniform float u_bias;
 
   if (isnan(band_0)) {
     discard;
@@ -115,53 +154,90 @@ const customFrag = `
   } else {
     float linear = 0.0;
 ${dotTerms}
-    float score = u_mode > 1.5 ? 1.0 / (1.0 + exp(-(linear + u_bias))) : linear;
+    float score = linear;
     if (score < u_threshold) {
       discard;
     }
+
     float t = (score - u_threshold) / max(1.0 - u_threshold, 1e-3);
     vec4 c = texture(colormap, vec2(clamp(t, 0.0, 1.0), 0.5));
     fragColor = vec4(c.rgb * opacity, opacity);
   }
 `;
 
-type Sample = { embedding: number[]; marker: maplibregl.Marker };
-const samples: Sample[] = [];
-
-type Label = {
-  lng: number;
-  lat: number;
+type Sample = {
+  embedding: number[];
   positive: boolean;
-  embeddings: number[][];
   marker: maplibregl.Marker;
 };
-const labels: Label[] = [];
-let background: BackgroundSample[] = [];
-// Reads and sampling are asynchronous. These counters let a result that
-// arrives after the training was reset, or after a newer request, be dropped.
-let trainingGeneration = 0;
-let backgroundRequest = 0;
-let model: Model | null = null;
+const samples: Sample[] = [];
 
-// Each mode keeps its own threshold: a cosine similarity and a probability
-// live on different scales.
-const thresholds: Record<Mode, number> = {
-  rgb: 0.8,
-  similarity: 0.8,
-  classify: 0.5,
+// Undo restores the state from before each change: a click, Start over, or
+// a change of embeddings.
+type Snapshot = {
+  samples: Sample[];
+  dataset: string;
 };
+const undoStack: Snapshot[] = [];
+const MAX_HISTORY = 50;
+// The select already shows the new value when its change event fires.
+let previousDataset = datasetSelect.value;
+
+function pushHistory() {
+  undoStack.push({ samples: [...samples], dataset: previousDataset });
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  undoButton.disabled = false;
+}
+
+function undo() {
+  const previous = undoStack.pop();
+  undoButton.disabled = undoStack.length === 0;
+  if (!previous) return;
+  for (const { marker } of samples) marker.remove();
+  samples.splice(0, samples.length, ...previous.samples);
+  for (const { marker } of samples) {
+    marker.addTo(map).getElement().hidden = mode() !== "similarity";
+  }
+  datasetSelect.value = previousDataset = previous.dataset;
+  applyDataset();
+}
 
 const mode = () => modeSelect.value as Mode;
-threshold.value = String(thresholds[mode()]);
+const dataset = () => datasetSelect.value as Dataset;
+const minZoom = () => (dataset() === "tessera" ? TESSERA_MIN_ZOOM : MIN_ZOOM);
+const year = () => Number(yearSelect.value);
+
+// EOX publishes a cloudless Sentinel-2 mosaic per year, except 2017.
+const mosaicYear = (y: number) => (y === 2017 ? 2018 : y);
+const sentinelTiles = (y: number) =>
+  `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-${mosaicYear(y)}_3857/default/g/{z}/{y}/{x}.jpg`;
+
+const sentinelSource = (y: number): maplibregl.RasterSourceSpecification => ({
+  type: "raster",
+  tiles: [sentinelTiles(y)],
+  tileSize: 256,
+  attribution:
+    'Sentinel-2 cloudless by <a href="https://s2maps.eu">EOX IT Services GmbH</a> (contains modified Copernicus Sentinel data)',
+});
+
+const sentinelLayer = (): maplibregl.RasterLayerSpecification => ({
+  id: "sentinel",
+  type: "raster",
+  source: "sentinel",
+  layout: { visibility: imagerySelect.value === "sentinel" ? "visible" : "none" },
+});
+if (shared) {
+  threshold.value = String(shared.threshold);
+  counterStrength.value = String(shared.counterWeight);
+}
+counterValue.textContent = counterStrength.value;
 
 function uniforms(): Record<string, number> {
-  const current = mode();
-  const vector = current === "classify" ? model?.weights : meanQuery();
+  const vector = dataset() === "aef" ? similarityQuery() : null;
   const values: Record<string, number> = {
-    u_mode: MODES[current],
+    u_mode: MODES[mode()],
     u_threshold: Number(threshold.value),
     u_hasQuery: vector ? 1 : 0,
-    u_bias: current === "classify" ? (model?.bias ?? 0) : 0,
   };
   BAND_INDICES.forEach((i) => {
     values[queryUniform(i)] = vector?.[i] ?? 0;
@@ -169,14 +245,51 @@ function uniforms(): Record<string, number> {
   return values;
 }
 
-function meanQuery(): number[] | null {
-  if (samples.length === 0) return null;
-  const mean = new Array(NUM_BANDS).fill(0);
-  for (const { embedding } of samples) {
-    embedding.forEach((v, i) => (mean[i] += v));
+function tesseraUniforms(): Record<string, number | number[]> {
+  const vector = dataset() === "tessera" ? similarityQuery() : null;
+  return {
+    u_mode: mode() === "rgb" ? 0 : 1,
+    u_threshold: Number(threshold.value),
+    u_hasQuery: vector ? 1 : 0,
+    u_q: Array.from({ length: TESSERA_BANDS }, (_, i) => vector?.[i] ?? 0),
+  };
+}
+
+function mean(embeddings: number[][]): number[] {
+  const out = new Array(embeddings[0].length).fill(0);
+  for (const e of embeddings) e.forEach((v, i) => (out[i] += v / embeddings.length));
+  return out;
+}
+
+// How much counter-examples subtract from the search vector (user
+// adjustable). The low default follows Rocchio relevance feedback, where
+// negative examples get a small weight: with a fixed threshold, heavier
+// weights (geovibes' 2 x mean - mean is 0.5) also drop true matches when
+// examples and counter-examples look alike.
+const counterWeight = () => Number(counterStrength.value);
+
+/**
+ * The similarity search vector: mean(examples) - counterWeight() x
+ * mean(counter-examples), a gentler form of geovibes' query. Subtracting
+ * counter-examples lowers every score, examples included, so the vector is
+ * scaled for the examples to average a score of 1: the threshold is a
+ * fraction of how well the examples themselves match. With one example this
+ * is a plain cosine.
+ */
+function similarityQuery(): number[] | null {
+  const pos = samples.filter((s) => s.positive).map((s) => s.embedding);
+  if (pos.length === 0) return null;
+  const neg = samples.filter((s) => !s.positive).map((s) => s.embedding);
+  let q = mean(pos);
+  if (neg.length) {
+    const n = mean(neg);
+    q = q.map((v, i) => v - counterWeight() * n[i]);
   }
-  const norm = Math.hypot(...mean) || 1;
-  return mean.map((v) => v / norm);
+  const examplesScore =
+    pos.reduce((sum, e) => sum + e.reduce((d, v, i) => d + v * q[i], 0), 0) /
+    pos.length;
+  if (examplesScore <= 0) return null;
+  return q.map((v) => v / examplesScore);
 }
 
 const selector = (yearIdx: number) => ({
@@ -184,33 +297,91 @@ const selector = (yearIdx: number) => ({
   band: { selected: BAND_INDICES, type: "index" as const },
 });
 
-const layer = new ZarrLayer({
-  id: "aef",
-  source: SOURCE,
-  variable: "embeddings",
-  selector: selector(YEAR - YEAR_ORIGIN),
-  minzoom: MIN_ZOOM,
-  clim: [0, 1],
+// Each AEF layer reports its own loading state; the indicator shows while
+// any of them is fetching.
+const loadingLayers = new Set<string>();
+// The notice at the top of the map says when to zoom in, shows loading,
+// and says when the map is ready for clicks.
+const notice = $<HTMLDivElement>("notice");
+const noticeText = $<HTMLSpanElement>("notice-text");
+const noticeSpinner = $<HTMLSpanElement>("notice-spinner");
+const READY_MS = 3000;
+let readyUntil = 0;
+// Set when the view zooms in far enough, so "Ready" follows that load only.
+let awaitingReady = true;
+
+function updateNotice() {
+  let text = "";
+  if (map.getZoom() < minZoom()) text = "Zoom in to start";
+  else if (loadingLayers.size > 0) text = "Loading embeddings…";
+  else if (Date.now() < readyUntil) text = "Ready: click a spot";
+  noticeText.textContent = text;
+  noticeSpinner.hidden = loadingLayers.size === 0 || map.getZoom() < minZoom();
+  notice.hidden = !text;
+}
+
+function setLayerLoading(id: string, loading: boolean) {
+  if (loading) loadingLayers.add(id);
+  else loadingLayers.delete(id);
+  // Wait for loading to stay quiet briefly, so a late chunk does not follow
+  // "Ready" with another "Loading".
+  if (loadingLayers.size === 0) {
+    setTimeout(() => {
+      if (loadingLayers.size > 0 || !awaitingReady || map.getZoom() < minZoom())
+        return;
+      awaitingReady = false;
+      readyUntil = Date.now() + READY_MS;
+      updateNotice();
+      setTimeout(updateNotice, READY_MS + 50);
+    }, 400);
+  }
+  updateNotice();
+}
+
+const aefStyle = (id: string) => ({
+  clim: [0, 1] as [number, number],
   colormap: ["#fde725", "#f89540", "#e1325a", "#9c179e"],
   opacity: Number(opacity.value),
   customFrag,
   uniforms: uniforms(),
-  onLoadingStateChange: ({ loading, error }) => {
+  onLoadingStateChange: ({
+    loading,
+    error,
+  }: {
+    loading: boolean;
+    error?: Error | null;
+  }) => {
+    setLayerLoading(id, loading && !error);
     if (error) status.textContent = `Error: ${error.message}`;
-    else status.textContent = loading ? "Loading embeddings…" : zoomHint();
   },
 });
 
-const map = new maplibregl.Map({
+const layer = new ZarrLayer({
+  id: "aef",
+  source: SOURCE,
+  variable: "embeddings",
+  selector: selector(year() - YEAR_ORIGIN),
+  minzoom: MIN_ZOOM,
+  ...aefStyle("aef"),
+});
+
+const map: maplibregl.Map = new maplibregl.Map({
   container: "map",
-  center: restored?.view.center ?? [-121.75, 45.33],
-  zoom: restored?.view.zoom ?? 14,
+  center: shared?.center ?? [-121.75, 45.33],
+  zoom: shared?.zoom ?? 14,
   maxZoom: 18,
   // Shift-click adds samples; box zoom would swallow it.
   boxZoom: false,
   style: {
     version: 8,
+    glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
     sources: {
+      osm: {
+        type: "vector",
+        url: "https://tiles.openfreemap.org/planet",
+        attribution:
+          '<a href="https://openfreemap.org">OpenFreeMap</a> © <a href="https://www.openmaptiles.org/">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      },
       imagery: {
         type: "raster",
         tiles: [
@@ -220,25 +391,100 @@ const map = new maplibregl.Map({
         maxzoom: 16,
         attribution: "Imagery: USGS The National Map",
       },
+      sentinel: sentinelSource(year()),
     },
-    layers: [{ id: "imagery", type: "raster", source: "imagery" }],
+    layers: [
+      {
+        id: "imagery",
+        type: "raster",
+        source: "imagery",
+        layout: { visibility: imagerySelect.value === "aerial" ? "visible" : "none" },
+      },
+      sentinelLayer(),
+      ...REFERENCE_LAYERS,
+    ],
   },
 });
 
-const nlcdVisible = $<HTMLInputElement>("nlcd-visible");
-const nlcdOpacity = $<HTMLInputElement>("nlcd-opacity");
-const nlcdOpacityValue = $<HTMLOutputElement>("nlcd-opacity-value");
-nlcdOpacityValue.textContent = nlcdOpacity.value;
-const nlcdLayer = createNlcdLayer(Number(nlcdOpacity.value));
+const tessera = new TesseraLayers(
+  map,
+  (id) => ({
+    ...aefStyle(id),
+    minzoom: TESSERA_MIN_ZOOM,
+    uniforms: tesseraUniforms(),
+  }),
+  FIRST_REFERENCE_LAYER,
+  TESSERA_MIN_ZOOM,
+  year(),
+);
 
-function zoomHint(): string {
-  return map.getZoom() < MIN_ZOOM
-    ? "Zoom in closer, until you can see individual fields and streets."
-    : "";
+/** Show the chosen dataset's layers and hide the other's. */
+function applyDataset() {
+  const current = dataset();
+  if (!map.getLayer("aef")) return;
+  map.setLayoutProperty(
+    "aef",
+    "visibility",
+    current === "aef" ? "visible" : "none",
+  );
+  tessera.update(current === "tessera");
+  // Hidden layers stop fetching and may never report finishing.
+  const hidden = current === "aef" ? tessera.ids() : ["aef"];
+  for (const id of hidden) loadingLayers.delete(id);
+  refreshUniforms();
+  updatePanel();
+  updateNotice();
+  updateCursor();
 }
+
+let shownYear = year();
+
+/** Point the embeddings and the Sentinel-2 imagery at the current year. */
+function applyYear() {
+  const y = year();
+  if (y !== shownYear) {
+    shownYear = y;
+    layer.setSelector(selector(y - YEAR_ORIGIN));
+    tessera.setYear(y);
+    // Replace the imagery rather than retiling it: retiled sources keep the
+    // old year's tiles on screen until each new one arrives.
+    map.removeLayer("sentinel");
+    map.removeSource("sentinel");
+    map.addSource("sentinel", sentinelSource(y));
+    map.addLayer(sentinelLayer(), "imagery");
+  }
+  yearNote.textContent =
+    imagerySelect.value === "sentinel" && mosaicYear(y) !== y
+      ? `There is no Sentinel-2 mosaic for ${y}; the imagery is from ${mosaicYear(y)}.`
+      : "";
+  yearNote.hidden = !yearNote.textContent;
+  aerialNote.textContent = `The aerial photos are from various years, so they may not match the ${y} embeddings.`;
+  aerialNote.hidden = imagerySelect.value !== "aerial";
+}
+
+yearSelect.addEventListener("change", applyYear);
+imagerySelect.addEventListener("change", () => {
+  const sentinel = imagerySelect.value === "sentinel";
+  map.setLayoutProperty("sentinel", "visibility", sentinel ? "visible" : "none");
+  map.setLayoutProperty("imagery", "visibility", sentinel ? "none" : "visible");
+  applyYear();
+});
+applyYear();
+
+const referenceVisible = $<HTMLInputElement>("reference-visible");
+referenceVisible.addEventListener("change", () => {
+  for (const { id } of REFERENCE_LAYERS) {
+    map.setLayoutProperty(
+      id,
+      "visibility",
+      referenceVisible.checked ? "visible" : "none",
+    );
+  }
+});
 
 function refreshUniforms() {
   layer.setUniforms(uniforms());
+  tessera.setUniforms(tesseraUniforms());
 }
 
 function addMarker(lngLat: maplibregl.LngLat, kind?: "positive" | "negative") {
@@ -248,27 +494,17 @@ function addMarker(lngLat: maplibregl.LngLat, kind?: "positive" | "negative") {
 }
 
 const HINTS: Record<Mode, { intro: string; steps: string[] }> = {
-  classify: {
-    intro:
-      "Teach the map a new land cover class by example. Everything runs in the browser.",
-    steps: [
-      "Zoom in until you can see individual fields and streets, and name your class.",
-      "Click a few examples of it (green).",
-      "Shift-click things that aren't it (red), especially wrong highlights.",
-      "Raise the match threshold for a stricter map.",
-    ],
-  },
   similarity: {
-    intro: "Highlight everything that looks like a spot you pick.",
+    intro:
+      "Click a spot to highlight everything similar. Everything runs in the browser.",
     steps: [
-      "Zoom in until you can see individual fields and streets, and click a spot.",
-      "Shift-click more spots to search for their average.",
-      "Adjust the match threshold to widen or narrow the match.",
+      "Click more spots to find what they have in common.",
+      "Shift-click things it shouldn't match to steer away from them.",
     ],
   },
   rgb: {
     intro:
-      "Three of the 64 embedding dimensions shown as red, green and blue. Similar colors mean similar embeddings.",
+      "Three of the embedding dimensions shown as red, green and blue. Similar colors mean similar embeddings.",
     steps: [],
   },
 };
@@ -288,199 +524,48 @@ function renderHint(current: Mode) {
 
 function updatePanel() {
   const current = mode();
-  classifyControls.hidden = current !== "classify";
-  thresholdLabel.textContent =
-    current === "classify" ? "Match threshold (probability)" : "Match threshold";
+  copyLinkButton.hidden = current !== "similarity";
+  counterControls.hidden = current !== "similarity";
   renderHint(current);
-
-  if (current === "classify") {
-    const pos = labels.filter((l) => l.positive);
-    const neg = labels.filter((l) => !l.positive);
-    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-    samplesLabel.textContent = `${plural(pos.length, "example")} · ${neg.length} not`;
-    backgroundCount.textContent = `${background.length} random spots used`;
-    const chosen =
-      NLCD_CLASSES.find((c) => c.code === Number(backgroundClass.value))?.name ??
-      "";
-    backgroundSummary.textContent = background.length
-      ? `Comparing against: ${chosen} · change`
-      : pos.length
-        ? `Comparing against: ${chosen} (none in view) · change`
-        : "Comparing against: set by your first example";
-    modelStats.textContent = model
-      ? `Learning from ${plural(pos.length, "example")}, ${plural(neg.length, "counter-example")} and ${background.length} random spots.`
-      : "Click an example to start.";
-  } else {
-    samplesLabel.textContent =
-      samples.length === 0
-        ? "No samples"
-        : `${samples.length} sample${samples.length > 1 ? "s" : ""}`;
-  }
-}
-
-function retrain() {
-  const examples: Example[] = [
-    ...labels.flatMap((l) =>
-      l.embeddings.map((x): Example => ({
-        x,
-        y: l.positive ? 1 : 0,
-        weight: 1,
-      })),
-    ),
-    ...background.map(
-      (b): Example => ({ x: b.embedding, y: 0, weight: BACKGROUND_WEIGHT }),
-    ),
-  ];
-  model = trainLogistic(examples);
-  refreshUniforms();
-  updatePanel();
-  drawBackground();
-  saveCurrent(currentTraining());
-}
-
-function currentTraining(): Training {
-  const center = map.getCenter();
-  return {
-    name: className.value || "Untitled",
-    year: YEAR,
-    backgroundClass: Number(backgroundClass.value),
-    view: { center: [center.lng, center.lat], zoom: map.getZoom() },
-    labels: labels.map(({ lng, lat, positive, embeddings }) => ({
-      lng,
-      lat,
-      positive,
-      embeddings,
-    })),
-    background,
-    model,
-    savedAt: new Date().toISOString(),
-  };
-}
-
-function applyTraining(training: Training) {
-  clearLabels();
-  for (const { lng, lat, positive, embeddings } of training.labels) {
-    labels.push({
-      lng,
-      lat,
-      positive,
-      embeddings,
-      marker: addMarker(
-        new maplibregl.LngLat(lng, lat),
-        positive ? "positive" : "negative",
-      ),
-    });
-  }
-  background = training.background;
-  className.value = training.name;
-  backgroundClass.value = String(training.backgroundClass);
-  map.jumpTo({ center: training.view.center, zoom: training.view.zoom });
-  retrain();
-}
-
-const BACKGROUND_SOURCE = "background-spots";
-
-function drawBackground() {
-  const source = map.getSource(BACKGROUND_SOURCE) as
-    | maplibregl.GeoJSONSource
-    | undefined;
-  source?.setData({
-    type: "FeatureCollection",
-    features: background.map(({ lng, lat }) => ({
-      type: "Feature",
-      properties: {},
-      geometry: { type: "Point", coordinates: [lng, lat] },
-    })),
-  });
-}
-
-function setBackgroundVisibility() {
-  if (!map.getLayer(BACKGROUND_SOURCE)) return;
-  const visible = showBackground.checked && mode() === "classify";
-  map.setLayoutProperty(BACKGROUND_SOURCE, "visibility", visible ? "visible" : "none");
-}
-
-function refreshSaved(selected?: string) {
-  savedSelect.replaceChildren(
-    ...listSaved().map((name) => new Option(name, name)),
-  );
-  if (selected) savedSelect.value = selected;
-  loadButton.disabled = deleteButton.disabled = savedSelect.options.length === 0;
-}
-
-async function resampleBackground() {
-  const request = ++backgroundRequest;
-  status.textContent = "Sampling NLCD background…";
-  try {
-    const samples = await sampleBackground(
-      map,
-      layer,
-      await nlcdLayer,
-      Number(backgroundClass.value),
-      BACKGROUND_COUNT,
-    );
-    if (request !== backgroundRequest) return;
-    background = samples;
-    const chosen = backgroundClass.selectedOptions[0]?.text ?? "that class";
-    status.textContent = background.length
-      ? zoomHint()
-      : `No "${chosen}" in view to compare against. Pick another land cover above.`;
-  } catch (err) {
-    if (request !== backgroundRequest) return;
-    status.textContent = `Background sampling failed: ${(err as Error).message}`;
-    console.error(err);
-  }
-  retrain();
+  const pos = samples.filter((s) => s.positive).length;
+  const neg = samples.length - pos;
+  samplesLabel.textContent = `${pos} example${pos === 1 ? "" : "s"} · ${neg} not`;
+  copyLinkButton.disabled = pos === 0;
 }
 
 async function onSimilarityClick(e: maplibregl.MapMouseEvent) {
-  const embedding = await readPoint(layer, e.lngLat.lng, e.lngLat.lat);
+  const { lng, lat } = e.lngLat;
+  const clicked = dataset();
+  const zoneLayer = tessera.layerAt(lng);
+  const embedding =
+    clicked === "aef"
+      ? await readPoint(layer, lng, lat)
+      : zoneLayer
+        ? await readTesseraPoint(zoneLayer, lng, lat)
+        : null;
+  if (clicked !== dataset()) return;
   if (!embedding) {
     status.textContent = "No embedding at that point";
     return;
   }
-  if (!e.originalEvent.shiftKey) clearSamples();
-  samples.push({ embedding, marker: addMarker(e.lngLat) });
+  pushHistory();
+  const positive = !e.originalEvent.shiftKey;
+  samples.push({
+    embedding,
+    positive,
+    marker: addMarker(e.lngLat, positive ? "positive" : "negative"),
+  });
   refreshUniforms();
   updatePanel();
 }
 
-async function onClassifyClick(e: maplibregl.MapMouseEvent) {
-  const generation = trainingGeneration;
-  const embeddings = await readPatch(layer, e.lngLat.lng, e.lngLat.lat);
-  if (generation !== trainingGeneration) return;
-  if (embeddings.length === 0) {
-    status.textContent = "No embedding at that point";
-    return;
-  }
-  const positive = !e.originalEvent.shiftKey;
-  const firstExample = positive && !labels.some((l) => l.positive);
-  if (firstExample && background.length === 0) {
-    const code = await nlcdClassAt(await nlcdLayer, e.lngLat.lng, e.lngLat.lat);
-    if (generation !== trainingGeneration) return;
-    if (NLCD_CLASSES.some((c) => c.code === code)) {
-      backgroundClass.value = String(code);
-    }
-  }
-  labels.push({
-    lng: e.lngLat.lng,
-    lat: e.lngLat.lat,
-    positive,
-    embeddings,
-    marker: addMarker(e.lngLat, positive ? "positive" : "negative"),
-  });
-  if (background.length === 0) await resampleBackground();
-  else retrain();
-}
-
 map.on("click", async (e) => {
-  if (map.getZoom() < MIN_ZOOM || mode() === "rgb") return;
+  if (map.getZoom() < minZoom() || mode() === "rgb") return;
   status.textContent = "Reading embedding…";
   try {
-    if (mode() === "classify") await onClassifyClick(e);
-    else await onSimilarityClick(e);
+    await onSimilarityClick(e);
     if (status.textContent === "Reading embedding…") {
-      status.textContent = zoomHint();
+      status.textContent = "";
     }
   } catch (err) {
     status.textContent = `Query failed: ${(err as Error).message}`;
@@ -493,79 +578,32 @@ function clearSamples() {
   samples.length = 0;
 }
 
-function clearLabels() {
-  for (const { marker } of labels) marker.remove();
-  labels.length = 0;
-  background = [];
-  model = null;
-  trainingGeneration++;
-  backgroundRequest++;
-  drawBackground();
-}
-
 clearButton.addEventListener("click", () => {
-  if (mode() === "classify") {
-    clearLabels();
-    saveCurrent(currentTraining());
-  } else {
-    clearSamples();
-  }
+  pushHistory();
+  clearSamples();
   refreshUniforms();
   updatePanel();
 });
 
-saveButton.addEventListener("click", () => {
-  const training = currentTraining();
-  try {
-    saveTraining(training);
-    refreshSaved(training.name);
-    status.textContent = `Saved "${training.name}"`;
-  } catch (err) {
-    status.textContent = (err as Error).message;
+undoButton.addEventListener("click", undo);
+document.addEventListener("keydown", (e) => {
+  const editing = (e.target as HTMLElement).closest("input, textarea, select");
+  if (
+    (e.metaKey || e.ctrlKey) &&
+    !e.shiftKey &&
+    e.key.toLowerCase() === "z" &&
+    !editing
+  ) {
+    e.preventDefault();
+    undo();
   }
 });
-exportButton.addEventListener("click", () => downloadTraining(currentTraining()));
-importButton.addEventListener("click", () => importFile.click());
-importFile.addEventListener("change", async () => {
-  const file = importFile.files?.[0];
-  importFile.value = "";
-  if (!file) return;
-  try {
-    applyTraining(await readTrainingFile(file));
-    status.textContent = `Imported "${file.name}"`;
-  } catch (err) {
-    status.textContent = `Import failed: ${(err as Error).message}`;
-  }
-});
-loadButton.addEventListener("click", () => {
-  const training = loadSaved(savedSelect.value);
-  if (training) applyTraining(training);
-});
-deleteButton.addEventListener("click", () => {
-  deleteSaved(savedSelect.value);
-  refreshSaved();
-});
-
-resampleButton.addEventListener("click", resampleBackground);
-showBackground.addEventListener("change", setBackgroundVisibility);
-backgroundClass.addEventListener("change", resampleBackground);
-className.addEventListener("input", () => {
-  updatePanel();
-  saveCurrent(currentTraining());
-});
-
-
-let previousMode = mode();
 modeSelect.addEventListener("change", () => {
-  thresholds[previousMode] = Number(threshold.value);
-  previousMode = mode();
-  threshold.value = String(thresholds[previousMode]);
-  thresholdValue.textContent = Number(threshold.value).toFixed(3);
-  for (const s of samples) s.marker.getElement().hidden = mode() !== "similarity";
-  for (const l of labels) l.marker.getElement().hidden = mode() !== "classify";
-  setBackgroundVisibility();
+  for (const s of samples)
+    s.marker.getElement().hidden = mode() !== "similarity";
   refreshUniforms();
   updatePanel();
+  updateCursor();
 });
 
 threshold.addEventListener("input", () => {
@@ -577,52 +615,80 @@ thresholdValue.textContent = Number(threshold.value).toFixed(3);
 opacity.addEventListener("input", () => {
   opacityValue.textContent = opacity.value;
   layer.setOpacity(Number(opacity.value));
+  tessera.setOpacity(Number(opacity.value));
 });
 opacityValue.textContent = opacity.value;
 
-map.on("zoomend", () => {
-  status.textContent = zoomHint();
+/** A pointer where clicks add examples, the default map cursor elsewhere. */
+function updateCursor() {
+  const clickable = map.getZoom() >= minZoom() && mode() !== "rgb";
+  map.getCanvas().style.cursor = clickable ? "pointer" : "";
+}
+
+map.on("zoom", () => {
+  if (map.getZoom() < minZoom()) awaitingReady = true;
+  updateNotice();
+  updateCursor();
+});
+map.on("load", updateCursor);
+map.on("load", updateNotice);
+map.on("moveend", () => {
+  if (dataset() === "tessera") tessera.update(true);
 });
 
-nlcdVisible.addEventListener("change", () => {
-  map.setLayoutProperty("nlcd", "visibility", nlcdVisible.checked ? "visible" : "none");
-});
-nlcdOpacity.addEventListener("input", async () => {
-  nlcdOpacityValue.textContent = nlcdOpacity.value;
-  (await nlcdLayer).setOpacity(Number(nlcdOpacity.value));
+datasetSelect.addEventListener("change", () => {
+  pushHistory();
+  previousDataset = datasetSelect.value;
+  clearSamples();
+  applyDataset();
 });
 
-map.on("load", async () => {
-  map.addLayer(layer);
-  map.addSource(BACKGROUND_SOURCE, {
-    type: "geojson",
-    data: { type: "FeatureCollection", features: [] },
+counterStrength.addEventListener("input", () => {
+  counterValue.textContent = counterStrength.value;
+  refreshUniforms();
+});
+map.on("load", () => {
+  map.addLayer(layer, FIRST_REFERENCE_LAYER);
+  applyDataset();
+});
+
+if (shared) {
+  for (const { lng, lat, positive, embedding } of shared.samples) {
+    samples.push({
+      embedding,
+      positive,
+      marker: addMarker(
+        new maplibregl.LngLat(lng, lat),
+        positive ? "positive" : "negative",
+      ),
+    });
+  }
+  refreshUniforms();
+}
+
+copyLinkButton.addEventListener("click", async () => {
+  const center = map.getCenter();
+  const encoded = encodeSearch({
+    center: [center.lng, center.lat],
+    zoom: map.getZoom(),
+    threshold: Number(threshold.value),
+    counterWeight: counterWeight(),
+    year: year(),
+    dataset: dataset(),
+    samples: samples.map(({ embedding, positive, marker }) => {
+      const { lng, lat } = marker.getLngLat();
+      return { lng, lat, positive, embedding };
+    }),
   });
-  map.addLayer({
-    id: BACKGROUND_SOURCE,
-    type: "circle",
-    source: BACKGROUND_SOURCE,
-    paint: {
-      "circle-radius": 3,
-      "circle-color": "#ffffff",
-      "circle-stroke-color": "#1f2937",
-      "circle-stroke-width": 1,
-      "circle-opacity": 0.85,
-    },
-  });
-  drawBackground();
-  setBackgroundVisibility();
+  const url = `${location.origin}${location.pathname}${SHARE_PREFIX}${encoded}`;
+  window.history.replaceState(null, "", url);
   try {
-    map.addLayer(await nlcdLayer, "aef");
-    if (!nlcdVisible.checked) map.setLayoutProperty("nlcd", "visibility", "none");
-  } catch (err) {
-    status.textContent = `NLCD failed: ${(err as Error).message}`;
-    console.error(err);
+    await navigator.clipboard.writeText(url);
+    status.textContent = "Link copied. Anyone who opens it sees this search.";
+  } catch {
+    status.textContent = "The link is in the address bar; copy it from there.";
   }
 });
-
-if (restored) applyTraining(restored);
-refreshSaved();
 updatePanel();
 
-Object.assign(window, { map, layer, nlcdLayer });
+Object.assign(window, { map, layer, tessera });

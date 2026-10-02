@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@carbonplan/zarr-layer": "file:vendor/carbonplan-zarr-layer-0.10.0-live-geoembeddings.tgz",
+    "@carbonplan/zarr-layer": "^0.11.0",
     "maplibre-gl": "^5.0.0"
   },
   "devDependencies": {

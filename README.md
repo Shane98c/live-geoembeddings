@@ -56,10 +56,4 @@ npm install
 npm run dev
 ```
 
-`vendor/` holds a build of zarr-layer with unreleased changes: custom shaders
-read all bands from one texture array, small integer dtypes upload as integer
-textures, band arrays are freed after upload, small chunks can be grouped
-into larger regions, region fetches are queued, and the initial fetch
-respects `minzoom`.
-
 Pushes to `main` deploy to GitHub Pages.

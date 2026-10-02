@@ -8,16 +8,17 @@ Live site: https://shane98c.github.io/live-geoembeddings/
 
 ## Modes
 
-Click adds an example (green), Shift-click adds a counter-example (red),
-Cmd/Ctrl+Z undoes the last change. The year picker (2017-2025) switches both
+Clicks add a match (green) or, with the switch set to "Not a match" or
+Shift held, a spot that is not a match (red). Cmd/Ctrl+Z undoes the last
+change. The year picker (2017-2025) switches both
 the embeddings and the Sentinel-2 imagery; aerial imagery is also available
 but is not matched to the year.
 
 - **Find similar spots** (default). Scores each pixel by its similarity to a
-  search vector: the average of your examples, minus the average of your
-  counter-examples times the counter-example strength (default 0.25; a
+  search vector: the average of your matches, minus the average of the spots
+  that are not a match times the not-a-match strength (default 0.25; a
   gentler form of [geovibes](https://github.com/cr458/geovibes)' 2 x mean -
-  mean). Scores are scaled so your examples average 1, and pixels above the
+  mean). Scores are scaled so your matches average 1, and pixels above the
   match threshold are highlighted.
   **Copy link** encodes the clicks, their embeddings, the threshold and the
   view in the URL.

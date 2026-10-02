@@ -71,6 +71,11 @@ body {
   flex-shrink: 0;
 }
 
+/* Settings follow the instructions and the controls for adding spots. */
+#panel .setting {
+  order: 1;
+}
+
 /* The panel's display rules would otherwise override the hidden attribute. */
 #panel [hidden] {
   display: none;
@@ -79,6 +84,100 @@ body {
 #panel h1 {
   font-size: 16px;
   margin: 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Wide screens show every setting, so there is nothing to toggle. */
+#panel-toggle {
+  display: none;
+}
+
+#add-mode {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#add-mode legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+/* A two-way radio toggle: the chosen side fills with its marker color. */
+#add-mode .segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#panel #add-mode .segmented label {
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #ccc;
+}
+
+#add-mode input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#add-mode label:has(input:checked) {
+  color: #fff;
+  font-weight: 600;
+}
+
+#add-mode label:has(input[value='positive']:checked) {
+  background: rgba(46, 204, 113, 0.35);
+}
+
+#add-mode label:has(input[value='negative']:checked) {
+  background: rgba(231, 76, 60, 0.4);
+}
+
+#add-mode label:has(input:focus-visible) {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot.positive {
+  background: #2ecc71;
+}
+
+.dot.negative {
+  background: #e74c3c;
+}
+
+/* Touch screens have no Shift key. */
+@media (hover: none) {
+  #shift-note {
+    display: none;
+  }
 }
 
 #panel label {
@@ -149,4 +248,58 @@ body {
   border-radius: 50%;
   background: #e0f;
   box-shadow: 0 0 3px #000;
+}
+
+/* The map attribution is the only top-right control: on phones it stays
+   there, clear of the bottom sheet; on wider screens it sits bottom right. */
+@media (min-width: 641px) {
+  .maplibregl-ctrl-top-right {
+    top: auto;
+    bottom: 0;
+  }
+}
+
+/* Phones: a bottom sheet that keeps the map visible. Collapsed, it shows the
+   instructions and the example controls; Settings opens the rest. */
+@media (max-width: 640px) {
+  #panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 60dvh;
+    border-radius: 12px 12px 0 0;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  #panel.collapsed .setting {
+    display: none;
+  }
+
+  #panel-toggle {
+    display: block;
+  }
+
+  #panel button {
+    min-height: 40px;
+    padding: 0 12px;
+  }
+
+  #panel #add-mode .segmented label {
+    min-height: 40px;
+    padding: 0 12px;
+  }
+
+  /* iOS zooms into form fields with text under 16px. */
+  #panel select,
+  #panel input,
+  #panel button {
+    font-size: 16px;
+  }
+
+  .notice {
+    top: calc(12px + env(safe-area-inset-top));
+    max-width: calc(100% - 96px);
+  }
 }

@@ -90,6 +90,8 @@ type Mode = keyof typeof MODES;
 
 const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
+// Touch screens get tap wording and a switch in place of Shift-click.
+const touch = matchMedia("(hover: none)").matches;
 
 const modeSelect = $<HTMLSelectElement>("mode");
 const datasetSelect = $<HTMLSelectElement>("dataset");
@@ -107,7 +109,8 @@ const yearSelect = $<HTMLSelectElement>("year");
 const imagerySelect = $<HTMLSelectElement>("imagery");
 const yearNote = $<HTMLParagraphElement>("year-note");
 const aerialNote = $<HTMLParagraphElement>("aerial-note");
-for (let y = LATEST_YEAR; y >= YEAR_ORIGIN; y--) yearSelect.add(new Option(String(y)));
+for (let y = LATEST_YEAR; y >= YEAR_ORIGIN; y--)
+  yearSelect.add(new Option(String(y)));
 const counterControls = $<HTMLLabelElement>("counter-controls");
 const counterStrength = $<HTMLInputElement>("counter-strength");
 const counterValue = $<HTMLOutputElement>("counter-value");
@@ -224,7 +227,9 @@ const sentinelLayer = (): maplibregl.RasterLayerSpecification => ({
   id: "sentinel",
   type: "raster",
   source: "sentinel",
-  layout: { visibility: imagerySelect.value === "sentinel" ? "visible" : "none" },
+  layout: {
+    visibility: imagerySelect.value === "sentinel" ? "visible" : "none",
+  },
 });
 if (shared) {
   threshold.value = String(shared.threshold);
@@ -257,7 +262,8 @@ function tesseraUniforms(): Record<string, number | number[]> {
 
 function mean(embeddings: number[][]): number[] {
   const out = new Array(embeddings[0].length).fill(0);
-  for (const e of embeddings) e.forEach((v, i) => (out[i] += v / embeddings.length));
+  for (const e of embeddings)
+    e.forEach((v, i) => (out[i] += v / embeddings.length));
   return out;
 }
 
@@ -314,7 +320,8 @@ function updateNotice() {
   let text = "";
   if (map.getZoom() < minZoom()) text = "Zoom in to start";
   else if (loadingLayers.size > 0) text = "Loading embeddings…";
-  else if (Date.now() < readyUntil) text = "Ready: click a spot";
+  else if (Date.now() < readyUntil)
+    text = touch ? "Ready: tap a spot" : "Ready: click a spot";
   noticeText.textContent = text;
   noticeSpinner.hidden = loadingLayers.size === 0 || map.getZoom() < minZoom();
   notice.hidden = !text;
@@ -372,6 +379,7 @@ const map: maplibregl.Map = new maplibregl.Map({
   maxZoom: 18,
   // Shift-click adds samples; box zoom would swallow it.
   boxZoom: false,
+  attributionControl: false,
   style: {
     version: 8,
     glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
@@ -398,13 +406,51 @@ const map: maplibregl.Map = new maplibregl.Map({
         id: "imagery",
         type: "raster",
         source: "imagery",
-        layout: { visibility: imagerySelect.value === "aerial" ? "visible" : "none" },
+        layout: {
+          visibility: imagerySelect.value === "aerial" ? "visible" : "none",
+        },
       },
       sentinelLayer(),
       ...REFERENCE_LAYERS,
     ],
   },
 });
+// Top right stays clear of the bottom sheet on phones (style.css moves it to
+// the bottom on wider screens). On narrow maps
+// MapLibre shrinks the attribution to an info button and opens it as it
+// does; here it closes then, since open it covers much of a phone screen.
+// Leaving `compact` unset lets it follow the map's width.
+map.addControl(
+  new maplibregl.AttributionControl({
+    customAttribution: '<a href="https://maplibre.org/">MapLibre</a>',
+  }),
+  "top-right",
+);
+let attributionCompact = false;
+const closeAttributionWhenCompacted = () => {
+  const control = map.getContainer().querySelector(".maplibregl-ctrl-attrib");
+  const compact = !!control?.classList.contains("maplibregl-compact");
+  if (compact && !attributionCompact) {
+    control!.classList.remove("maplibregl-compact-show");
+  }
+  attributionCompact = compact;
+};
+map.on("load", closeAttributionWhenCompacted);
+map.on("resize", closeAttributionWhenCompacted);
+
+// The sheet starts collapsed on phones.
+const narrow = matchMedia("(max-width: 640px)").matches;
+const panel = $<HTMLElement>("panel");
+const panelToggle = $<HTMLButtonElement>("panel-toggle");
+function setPanelCollapsed(collapsed: boolean) {
+  panel.classList.toggle("collapsed", collapsed);
+  panelToggle.setAttribute("aria-expanded", String(!collapsed));
+  panelToggle.textContent = collapsed ? "Settings" : "Hide settings";
+}
+setPanelCollapsed(narrow);
+panelToggle.addEventListener("click", () =>
+  setPanelCollapsed(!panel.classList.contains("collapsed")),
+);
 
 const tessera = new TesseraLayers(
   map,
@@ -465,7 +511,11 @@ function applyYear() {
 yearSelect.addEventListener("change", applyYear);
 imagerySelect.addEventListener("change", () => {
   const sentinel = imagerySelect.value === "sentinel";
-  map.setLayoutProperty("sentinel", "visibility", sentinel ? "visible" : "none");
+  map.setLayoutProperty(
+    "sentinel",
+    "visibility",
+    sentinel ? "visible" : "none",
+  );
   map.setLayoutProperty("imagery", "visibility", sentinel ? "none" : "visible");
   applyYear();
 });
@@ -493,13 +543,22 @@ function addMarker(lngLat: maplibregl.LngLat, kind?: "positive" | "negative") {
   return new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
 }
 
+// Whether a click adds a match or not a match. Shift-click adds the other.
+const addMode = $<HTMLFieldSetElement>("add-mode");
+$<HTMLElement>("add-mode-label").textContent = touch
+  ? "Taps add"
+  : "Clicks add";
+const addsMatch = () =>
+  addMode.querySelector<HTMLInputElement>("input:checked")?.value ===
+  "positive";
+
+const tapOrClick = touch ? "Tap" : "Click";
 const HINTS: Record<Mode, { intro: string; steps: string[] }> = {
   similarity: {
-    intro:
-      "Click a spot to highlight everything similar. Everything runs in the browser.",
+    intro: `${tapOrClick} a spot to highlight places like it. Everything runs in the browser.`,
     steps: [
-      "Click more spots to find what they have in common.",
-      "Shift-click things it shouldn't match to steer away from them.",
+      "Add more matches to sharpen what it looks for.",
+      "Add spots that are not a match to steer it away from them.",
     ],
   },
   rgb: {
@@ -526,14 +585,16 @@ function updatePanel() {
   const current = mode();
   copyLinkButton.hidden = current !== "similarity";
   counterControls.hidden = current !== "similarity";
+  addMode.hidden = current !== "similarity";
   renderHint(current);
   const pos = samples.filter((s) => s.positive).length;
   const neg = samples.length - pos;
-  samplesLabel.textContent = `${pos} example${pos === 1 ? "" : "s"} · ${neg} not`;
+  samplesLabel.textContent = `${pos} match${pos === 1 ? "" : "es"} · ${neg} not a match`;
   copyLinkButton.disabled = pos === 0;
 }
 
 async function onSimilarityClick(e: maplibregl.MapMouseEvent) {
+  const positive = addsMatch() !== e.originalEvent.shiftKey;
   const { lng, lat } = e.lngLat;
   const clicked = dataset();
   const zoneLayer = tessera.layerAt(lng);
@@ -549,7 +610,6 @@ async function onSimilarityClick(e: maplibregl.MapMouseEvent) {
     return;
   }
   pushHistory();
-  const positive = !e.originalEvent.shiftKey;
   samples.push({
     embedding,
     positive,

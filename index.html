@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Live Geoembeddings</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
@@ -13,10 +13,28 @@
       <span id="notice-text"></span>
     </div>
     <aside id="panel">
-      <h1>Live Geoembeddings</h1>
+      <div class="panel-head">
+        <h1>Live Geoembeddings</h1>
+        <button id="panel-toggle" type="button" aria-expanded="true">Settings</button>
+      </div>
       <div id="hint" class="hint"></div>
 
-      <label>
+      <fieldset id="add-mode">
+        <legend id="add-mode-label">Clicks add</legend>
+        <div class="segmented">
+          <label>
+            <input type="radio" name="add-kind" value="positive" checked />
+            <span class="dot positive" aria-hidden="true"></span>Match
+          </label>
+          <label>
+            <input type="radio" name="add-kind" value="negative" />
+            <span class="dot negative" aria-hidden="true"></span>Not a match
+          </label>
+        </div>
+        <p id="shift-note" class="hint">Shift-click adds the other kind.</p>
+      </fieldset>
+
+      <label class="setting">
         View
         <select id="mode">
           <option value="similarity" selected>Find similar spots</option>
@@ -24,7 +42,7 @@
         </select>
       </label>
 
-      <label>
+      <label class="setting">
         Embeddings
         <select id="dataset">
           <option value="aef" selected>AlphaEarth (Google, 64 dimensions)</option>
@@ -32,37 +50,37 @@
         </select>
       </label>
 
-      <label>
+      <label class="setting">
         Year
         <select id="year"></select>
       </label>
 
-      <label>
+      <label class="setting">
         Imagery
         <select id="imagery">
           <option value="sentinel" selected>Sentinel-2, same year (EOX)</option>
           <option value="aerial">Aerial photos (USGS)</option>
         </select>
       </label>
-      <p id="year-note" class="hint" hidden></p>
+      <p id="year-note" class="hint setting" hidden></p>
 
-      <label>
+      <label class="setting">
         Match threshold <output id="threshold-value"></output>
         <input id="threshold" type="range" min="0.3" max="1" step="0.005" value="0.8" />
       </label>
 
-      <label id="counter-controls">
-        <span>Counter-example strength <output id="counter-value"></output></span>
+      <label id="counter-controls" class="setting">
+        <span>Not-a-match strength <output id="counter-value"></output></span>
         <input id="counter-strength" type="range" min="0" max="1" step="0.05" value="0.25" />
-        <span class="hint">How strongly red clicks steer the search away from what they look like.</span>
+        <span class="hint">How strongly red spots steer the search away from what they look like.</span>
       </label>
 
-      <label>
+      <label class="setting">
         Highlight opacity <output id="opacity-value"></output>
         <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.9" />
       </label>
 
-      <label class="check">
+      <label class="check setting">
         <input id="reference-visible" type="checkbox" checked />
         Roads &amp; labels
       </label>
@@ -75,8 +93,9 @@
       </div>
 
       <p id="status" class="status"></p>
-      <p id="aerial-note" class="hint" hidden></p>
-      <p class="attribution">
+      <p id="aerial-note" class="hint setting" hidden></p>
+      <p class="attribution setting">
+        <a href="https://github.com/Shane98c/live-geoembeddings">Source code on GitHub</a>.
         The AlphaEarth Foundations Satellite Embedding dataset is produced by
         Google and Google DeepMind (CC-BY 4.0), via
         <a href="https://source.coop/tge-labs/aef-mosaic">source.coop</a>.

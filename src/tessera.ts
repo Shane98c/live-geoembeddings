@@ -1,5 +1,6 @@
 import type maplibregl from "maplibre-gl";
 import { ZarrLayer } from "@carbonplan/zarr-layer";
+import { MIN_ALPHA } from "./highlight";
 
 /**
  * TESSERA v1 embeddings (University of Cambridge) on Source Cooperative: 128
@@ -54,9 +55,10 @@ ${terms}
     if (score < u_threshold) {
       discard;
     }
-    float t = (score - u_threshold) / max(1.0 - u_threshold, 1e-3);
-    vec4 c = texture(colormap, vec2(clamp(t, 0.0, 1.0), 0.5));
-    fragColor = vec4(c.rgb * opacity, opacity);
+    float t = clamp((score - u_threshold) / max(1.0 - u_threshold, 1e-3), 0.0, 1.0);
+    vec4 c = texture(colormap, vec2(t, 0.5));
+    float a = opacity * mix(${MIN_ALPHA}, 1.0, t);
+    fragColor = vec4(c.rgb * a, a);
   }
 `;
 

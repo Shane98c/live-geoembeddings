@@ -143,12 +143,8 @@ body {
   font-weight: 600;
 }
 
-#add-mode label:has(input[value='positive']:checked) {
-  background: rgba(46, 204, 113, 0.35);
-}
-
-#add-mode label:has(input[value='negative']:checked) {
-  background: rgba(231, 76, 60, 0.4);
+#add-mode label:has(input:checked) {
+  background: rgba(255, 255, 255, 0.22);
 }
 
 #add-mode label:has(input:focus-visible) {
@@ -157,20 +153,11 @@ body {
 }
 
 .dot {
+  position: relative;
   display: inline-block;
-  width: 10px;
-  height: 10px;
-  border: 2px solid #fff;
-  border-radius: 50%;
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
-}
-
-.dot.positive {
-  background: #2ecc71;
-}
-
-.dot.negative {
-  background: #e74c3c;
 }
 
 /* Touch screens have no Shift key. */
@@ -184,6 +171,24 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* The ramp is drawn over a checker so the opacity fade reads too. */
+#colorbar .colorbar-ramp {
+  height: 10px;
+  border-radius: 3px;
+  background-color: #333;
+  background-image: var(--ramp),
+    repeating-conic-gradient(#555 0 25%, #333 0 50%);
+  background-size: 100% 100%, 8px 8px;
+}
+
+#colorbar .colorbar-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #bbb;
 }
 
 #panel .check {
@@ -233,21 +238,36 @@ body {
   color: #fc6;
 }
 
-.sample-marker.positive {
-  background: #2ecc71;
-}
-
-.sample-marker.negative {
-  background: #e74c3c;
-}
-
 .sample-marker {
-  width: 10px;
-  height: 10px;
-  border: 2px solid #fff;
+  width: 16px;
+  height: 16px;
+}
+
+/* Shape, not color, tells the two kinds apart: a match is a ring, a spot
+   that is not a match is an X. Both are white with a dark halo. */
+.positive {
+  border: 2.5px solid #fff;
   border-radius: 50%;
-  background: #e0f;
-  box-shadow: 0 0 3px #000;
+  box-shadow: 0 0 0 1.5px #000, inset 0 0 0 1.5px #000;
+  box-sizing: border-box;
+}
+
+.negative::before,
+.negative::after {
+  content: '';
+  position: absolute;
+  left: -10%;
+  top: 50%;
+  width: 120%;
+  height: 2.5px;
+  margin-top: -1.25px;
+  background: #fff;
+  box-shadow: 0 0 0 1.5px #000;
+  transform: rotate(45deg);
+}
+
+.negative::after {
+  transform: rotate(-45deg);
 }
 
 /* The map attribution is the only top-right control: on phones it stays

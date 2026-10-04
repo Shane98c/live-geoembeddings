@@ -7,15 +7,15 @@ import {
   SHARE_PREFIX,
   type Dataset,
 } from "./share";
+import { COLORMAP, MIN_ALPHA } from "./highlight";
 import { readTesseraPoint, TESSERA_BANDS, TesseraLayers } from "./tessera";
 const SOURCE = "https://data.source.coop/tge-labs/aef-mosaic";
 const YEAR_ORIGIN = 2017;
 const LATEST_YEAR = 2025;
-// Full-resolution only (no pyramid): each 256px region is 4 MB of int8 bands
-// and ~2.3 MB to download, and a zoom-12 viewport is ~50 regions.
-const MIN_ZOOM = 12;
-// TESSERA stores 128 bytes a pixel, and a zoom 12 view is ~500 MB of it.
-const TESSERA_MIN_ZOOM = 13;
+// Full-resolution only (no pyramid). A 256px region is ~2.3 MB to download
+// for AlphaEarth and ~7.4 MB for TESSERA, and a laptop-sized zoom 13 view is
+// ~55 regions: about 125 MB or 400 MB.
+const MIN_ZOOM = 13;
 // Band indices for the false-color view, following Google's AEF examples.
 const RGB_BANDS = [1, 16, 9];
 
@@ -162,9 +162,10 @@ ${dotTerms}
       discard;
     }
 
-    float t = (score - u_threshold) / max(1.0 - u_threshold, 1e-3);
-    vec4 c = texture(colormap, vec2(clamp(t, 0.0, 1.0), 0.5));
-    fragColor = vec4(c.rgb * opacity, opacity);
+    float t = clamp((score - u_threshold) / max(1.0 - u_threshold, 1e-3), 0.0, 1.0);
+    vec4 c = texture(colormap, vec2(t, 0.5));
+    float a = opacity * mix(${MIN_ALPHA}, 1.0, t);
+    fragColor = vec4(c.rgb * a, a);
   }
 `;
 
@@ -207,7 +208,7 @@ function undo() {
 
 const mode = () => modeSelect.value as Mode;
 const dataset = () => datasetSelect.value as Dataset;
-const minZoom = () => (dataset() === "tessera" ? TESSERA_MIN_ZOOM : MIN_ZOOM);
+const minZoom = () => MIN_ZOOM;
 const year = () => Number(yearSelect.value);
 
 // EOX publishes a cloudless Sentinel-2 mosaic per year, except 2017.
@@ -347,7 +348,7 @@ function setLayerLoading(id: string, loading: boolean) {
 
 const aefStyle = (id: string) => ({
   clim: [0, 1] as [number, number],
-  colormap: ["#fde725", "#f89540", "#e1325a", "#9c179e"],
+  colormap: COLORMAP,
   opacity: Number(opacity.value),
   customFrag,
   uniforms: uniforms(),
@@ -456,11 +457,11 @@ const tessera = new TesseraLayers(
   map,
   (id) => ({
     ...aefStyle(id),
-    minzoom: TESSERA_MIN_ZOOM,
+    minzoom: MIN_ZOOM,
     uniforms: tesseraUniforms(),
   }),
   FIRST_REFERENCE_LAYER,
-  TESSERA_MIN_ZOOM,
+  MIN_ZOOM,
   year(),
 );
 
@@ -585,6 +586,7 @@ function updatePanel() {
   const current = mode();
   copyLinkButton.hidden = current !== "similarity";
   counterControls.hidden = current !== "similarity";
+  colorbar.hidden = current !== "similarity";
   addMode.hidden = current !== "similarity";
   renderHint(current);
   const pos = samples.filter((s) => s.positive).length;
@@ -666,14 +668,36 @@ modeSelect.addEventListener("change", () => {
   updateCursor();
 });
 
+const colorbar = $<HTMLDivElement>("colorbar");
+const colorbarLow = $<HTMLSpanElement>("colorbar-low");
+
+/** The colormap with the shader's opacity fade, as a CSS gradient. */
+function colorbarRamp(): string {
+  const stops = COLORMAP.map((hex, i) => {
+    const t = i / (COLORMAP.length - 1);
+    const alpha = Number(opacity.value) * (MIN_ALPHA + (1 - MIN_ALPHA) * t);
+    const [r, g, b] = [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16));
+    return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)}) ${(t * 100).toFixed(0)}%`;
+  });
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+function updateColorbar() {
+  colorbar.style.setProperty("--ramp", colorbarRamp());
+  colorbarLow.textContent = `Threshold ${Number(threshold.value).toFixed(2)}`;
+}
+
 threshold.addEventListener("input", () => {
   thresholdValue.textContent = Number(threshold.value).toFixed(3);
+  updateColorbar();
   refreshUniforms();
 });
 thresholdValue.textContent = Number(threshold.value).toFixed(3);
+updateColorbar();
 
 opacity.addEventListener("input", () => {
   opacityValue.textContent = opacity.value;
+  updateColorbar();
   layer.setOpacity(Number(opacity.value));
   tessera.setOpacity(Number(opacity.value));
 });

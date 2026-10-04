@@ -8,8 +8,8 @@ Live site: https://shane98c.github.io/live-geoembeddings/
 
 ## Modes
 
-Clicks add a match (green) or, with the switch set to "Not a match" or
-Shift held, a spot that is not a match (red). Cmd/Ctrl+Z undoes the last
+Clicks add a match (a circle) or, with the switch set to "Not a match" or
+Shift held, a spot that is not a match (an X). Cmd/Ctrl+Z undoes the last
 change. The year picker (2017-2025) switches both
 the embeddings and the Sentinel-2 imagery; aerial imagery is also available
 but is not matched to the year.
@@ -26,10 +26,12 @@ but is not matched to the year.
 
 ## Embeddings
 
-- **AlphaEarth Foundations** (Google): 64 dimensions per 10 m pixel, loads
-  at zoom 12 and closer.
+Both load at zoom 13 and closer; a laptop-sized view is roughly 125 MB of
+AlphaEarth or 400 MB of TESSERA.
+
+- **AlphaEarth Foundations** (Google): 64 dimensions per 10 m pixel.
 - **TESSERA** (University of Cambridge): 128 dimensions per 10 m pixel,
-  stored per UTM zone, loads at zoom 13 and closer. Similarity is the cosine
+  stored per UTM zone. Similarity is the cosine
   of the raw int8 values, so the per-pixel scales are not needed.
 
 ## How it works

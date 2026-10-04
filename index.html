@@ -68,11 +68,18 @@
         Match threshold <output id="threshold-value"></output>
         <input id="threshold" type="range" min="0.3" max="1" step="0.005" value="0.8" />
       </label>
+      <div id="colorbar" class="setting" aria-hidden="true">
+        <div class="colorbar-ramp"></div>
+        <div class="colorbar-labels">
+          <span id="colorbar-low"></span>
+          <span>Best match</span>
+        </div>
+      </div>
 
       <label id="counter-controls" class="setting">
         <span>Not-a-match strength <output id="counter-value"></output></span>
         <input id="counter-strength" type="range" min="0" max="1" step="0.05" value="0.25" />
-        <span class="hint">How strongly red spots steer the search away from what they look like.</span>
+        <span class="hint">How strongly the not-a-match spots steer the search away from what they look like.</span>
       </label>
 
       <label class="setting">

@@ -4,9 +4,31 @@
  * highest. The vectors travel to the shader packed into one uniform array,
  * `u_q`, MAX_CLASSES slots of `dims` floats each; similarity mode is the
  * one-class case. Every slot costs fragment uniform vectors whether or not
- * it is used, which caps the number of classes.
+ * it is used, so the number of classes is sized to the device's budget.
  */
-export const MAX_CLASSES = 6;
+const PREFERRED_CLASSES = 6;
+// The widest embedding (TESSERA) sets the slot size; every layer's shader
+// must compile. The reserve covers the layers' other uniforms.
+const LARGEST_EMBEDDING = 128;
+const RESERVED_VECTORS = 48;
+// The WebGL2 minimum, assumed when the budget cannot be read.
+const MIN_BUDGET = 224;
+
+function fragmentUniformBudget(): number {
+  if (typeof document === "undefined") return MIN_BUDGET;
+  const gl = document.createElement("canvas").getContext("webgl2");
+  const budget = gl?.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS);
+  gl?.getExtension("WEBGL_lose_context")?.loseContext();
+  return typeof budget === "number" && budget > 0 ? budget : MIN_BUDGET;
+}
+
+export const MAX_CLASSES = Math.max(
+  1,
+  Math.min(
+    PREFERRED_CLASSES,
+    Math.floor((fragmentUniformBudget() - RESERVED_VECTORS) / LARGEST_EMBEDDING),
+  ),
+);
 
 // Default class colors: saturated hues that stay apart over imagery.
 export const PALETTE = [

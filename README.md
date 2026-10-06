@@ -1,8 +1,9 @@
 # Live Geoembeddings
 
-Click examples on a map and similar spots light up, using satellite
-embeddings read directly from cloud storage. Everything is computed in your
-browser; there is no server.
+Click examples on a map and similar spots light up, or define a few land
+cover classes and get a classification map, using satellite embeddings read
+directly from cloud storage. Everything is computed in your browser; there
+is no server.
 
 Live site: https://shane98c.github.io/live-geoembeddings/
 
@@ -14,15 +15,22 @@ change. The year picker (2017-2025) switches both
 the embeddings and the Sentinel-2 imagery; aerial imagery is also available
 but is not matched to the year.
 
-- **Find similar spots** (default). Scores each pixel by its similarity to a
+- **Similar** (default). Scores each pixel by its similarity to a
   search vector: the average of your matches, minus the average of the spots
   that are not a match times the not-a-match strength (default 0.25; a
   gentler form of [geovibes](https://github.com/cr458/geovibes)' 2 x mean -
   mean). Scores are scaled so your matches average 1, and pixels above the
   match threshold are highlighted.
-  **Copy link** encodes the clicks, their embeddings, the threshold and the
-  view in the URL.
-- **Embeddings as color.** Three embedding dimensions as RGB.
+- **Classify.** Define a few classes (Forest, Water and Roads to start;
+  rename them, recolor them, add your own) and click examples of each, plus
+  spots that are not that class. Each class gets a search vector built as
+  above, and every pixel takes the color of the class that scores it
+  highest. Pixels that no class scores above the match threshold stay clear.
+  The limit is six classes on most devices (see Rendering below).
+- **Colors.** Three embedding dimensions as RGB.
+
+**Copy link** encodes the clicks, their embeddings, the classes, the
+threshold and the view in the URL.
 
 ## Embeddings
 
@@ -40,7 +48,13 @@ AlphaEarth or 400 MB of TESSERA.
   with [zarr-layer](https://github.com/carbonplan/zarr-layer), a MapLibre
   custom layer.
 - **Rendering.** A fragment shader scores every pixel on screen against the
-  search vector. Clicks only change shader uniforms, so no data is refetched.
+  search vector, or against every class's vector. Clicks only change shader
+  uniforms, so no data is refetched. The class vectors share one uniform
+  array sized at compile time, and each slot costs fragment uniform vectors
+  whether used or not, so the class limit is read from the device's budget
+  at startup: six where WebGL2 reports the usual 1024 vectors, fewer where
+  it reports less. A data texture would lift the limit, but zarr-layer's
+  custom shaders cannot bind one yet.
 
 ## Data
 

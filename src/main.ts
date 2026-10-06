@@ -746,6 +746,7 @@ function renderClasses() {
   updatePanel();
 }
 
+addClassButton.title = `Up to ${MAX_CLASSES} class${MAX_CLASSES === 1 ? "" : "es"} on this device`;
 addClassButton.addEventListener("click", () => {
   if (classes.length >= MAX_CLASSES) return;
   pushHistory();
@@ -759,7 +760,7 @@ addClassButton.addEventListener("click", () => {
 });
 
 if (shared?.classes.length) {
-  for (const { name, color, samples: shown } of shared.classes) {
+  for (const { name, color, samples: shown } of shared.classes.slice(0, MAX_CLASSES)) {
     const c = newClass(name);
     c.color = color;
     c.samples = shown.map(({ lng, lat, positive, embedding }) => ({
@@ -774,7 +775,8 @@ if (shared?.classes.length) {
     classes.push(c);
   }
 } else {
-  for (const name of ["Forest", "Water", "Roads"]) classes.push(newClass(name));
+  for (const name of ["Forest", "Water", "Roads"].slice(0, MAX_CLASSES))
+    classes.push(newClass(name));
 }
 activeClassId = classes[0]?.id ?? 0;
 

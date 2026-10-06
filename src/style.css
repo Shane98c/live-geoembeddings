@@ -98,7 +98,8 @@ body {
   display: none;
 }
 
-#add-mode {
+#add-mode,
+#mode {
   border: 0;
   margin: 0;
   padding: 0;
@@ -112,44 +113,171 @@ body {
   margin-bottom: 4px;
 }
 
-/* A two-way radio toggle: the chosen side fills with its marker color. */
-#add-mode .segmented {
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Radio toggles: the chosen segment fills in. */
+.segmented {
   display: flex;
   padding: 2px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
 }
 
-#panel #add-mode .segmented label {
+#panel .segmented label {
   flex: 1;
   flex-direction: row;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   border-radius: 999px;
   cursor: pointer;
   color: #ccc;
+  white-space: nowrap;
 }
 
-#add-mode input {
+.segmented input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-#add-mode label:has(input:checked) {
+.segmented label:has(input:checked) {
   color: #fff;
   font-weight: 600;
-}
-
-#add-mode label:has(input:checked) {
   background: rgba(255, 255, 255, 0.22);
 }
 
-#add-mode label:has(input:focus-visible) {
-  outline: 2px solid #fff;
-  outline-offset: 1px;
+.segmented label:has(input:focus-visible) {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: -2px;
+}
+
+/* The view switch is the panel's main control: bigger, and the chosen view
+   is a solid white tab. */
+#mode .segmented {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+#panel #mode .segmented label {
+  padding: 8px 6px;
+  font-size: 14px;
+}
+
+#mode .segmented label:has(input:checked) {
+  background: #fff;
+  color: #111;
+}
+
+#classes {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  /* Fieldsets refuse to shrink below their content; the name input has a
+     wide default size. */
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#classes legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+#classes button {
+  align-self: flex-start;
+}
+
+/* One row per class: pick it, color it, name it; counts are examples and
+   not-this-class spots. */
+.class-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+.class-row.active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.class-row input[type='radio'] {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.class-row input[type='color'] {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+  background: none;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.class-row input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.class-row input[type='color']::-webkit-color-swatch {
+  border: 0;
+  border-radius: 3px;
+}
+
+.class-row input[type='text'] {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #eee;
+  font: inherit;
+}
+
+.class-row input[type='text']:focus {
+  border-color: rgba(255, 255, 255, 0.5);
+  outline: none;
+}
+
+.class-count {
+  font-size: 11px;
+  color: #bbb;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.class-remove {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ddd;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.class-remove:hover {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
 }
 
 .dot {
@@ -244,9 +372,10 @@ body {
 }
 
 /* Shape, not color, tells the two kinds apart: a match is a ring, a spot
-   that is not a match is an X. Both are white with a dark halo. */
+   that is not a match is an X. Both are white with a dark halo, or take
+   their class's color. */
 .positive {
-  border: 2.5px solid #fff;
+  border: 2.5px solid var(--marker-color, #fff);
   border-radius: 50%;
   box-shadow: 0 0 0 1.5px #000, inset 0 0 0 1.5px #000;
   box-sizing: border-box;
@@ -261,7 +390,7 @@ body {
   width: 120%;
   height: 2.5px;
   margin-top: -1.25px;
-  background: #fff;
+  background: var(--marker-color, #fff);
   box-shadow: 0 0 0 1.5px #000;
   transform: rotate(45deg);
 }
@@ -306,7 +435,7 @@ body {
     padding: 0 12px;
   }
 
-  #panel #add-mode .segmented label {
+  #panel .segmented label {
     min-height: 40px;
     padding: 0 12px;
   }

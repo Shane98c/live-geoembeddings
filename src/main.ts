@@ -9,6 +9,14 @@ import {
 } from "./share";
 import { COLORMAP, MIN_ALPHA } from "./highlight";
 import { readTesseraPoint, TESSERA_BANDS, TesseraLayers } from "./tessera";
+import {
+  CLASS_COLOR_GLSL,
+  classUniforms,
+  MAX_CLASSES,
+  PALETTE,
+  scoreGlsl,
+  type ClassQuery,
+} from "./classify";
 const SOURCE = "https://data.source.coop/tge-labs/aef-mosaic";
 const YEAR_ORIGIN = 2017;
 const LATEST_YEAR = 2025;
@@ -84,8 +92,7 @@ const REFERENCE_LAYERS: maplibregl.LayerSpecification[] = [
 const FIRST_REFERENCE_LAYER = REFERENCE_LAYERS[0].id;
 
 const BAND_INDICES = Array.from({ length: NUM_BANDS }, (_, i) => i);
-const queryUniform = (i: number) => `u_q${i}`;
-const MODES = { rgb: 0, similarity: 1 } as const;
+const MODES = { rgb: 0, similarity: 1, classify: 2 } as const;
 type Mode = keyof typeof MODES;
 
 const $ = <T extends HTMLElement>(id: string) =>
@@ -93,7 +100,12 @@ const $ = <T extends HTMLElement>(id: string) =>
 // Touch screens get tap wording and a switch in place of Shift-click.
 const touch = matchMedia("(hover: none)").matches;
 
-const modeSelect = $<HTMLSelectElement>("mode");
+const modeSwitch = $<HTMLFieldSetElement>("mode");
+const modeRadios = () =>
+  [...modeSwitch.querySelectorAll<HTMLInputElement>("input[name=mode]")];
+function setMode(value: Mode) {
+  for (const r of modeRadios()) r.checked = r.value === value;
+}
 const datasetSelect = $<HTMLSelectElement>("dataset");
 const hint = $<HTMLDivElement>("hint");
 const threshold = $<HTMLInputElement>("threshold");
@@ -114,13 +126,16 @@ for (let y = LATEST_YEAR; y >= YEAR_ORIGIN; y--)
 const counterControls = $<HTMLLabelElement>("counter-controls");
 const counterStrength = $<HTMLInputElement>("counter-strength");
 const counterValue = $<HTMLOutputElement>("counter-value");
+const classesBox = $<HTMLFieldSetElement>("classes");
+const classList = $<HTMLDivElement>("class-list");
+const addClassButton = $<HTMLButtonElement>("add-class");
 
-// A shared similarity search in the URL takes over the view and mode.
+// A shared search or classification in the URL takes over the view and mode.
 const shared = location.hash.startsWith(SHARE_PREFIX)
   ? decodeSearch(location.hash.slice(SHARE_PREFIX.length))
   : null;
 if (shared) {
-  modeSelect.value = "similarity";
+  setMode(shared.mode);
   datasetSelect.value = shared.dataset;
   yearSelect.value = String(shared.year);
 }
@@ -130,42 +145,46 @@ if (shared) {
 // against a unit-length query is the cosine similarity.
 const dequant = (band: string) => `(${band} / 127.5) * abs(${band} / 127.5)`;
 
-const dotTerms = BAND_INDICES.map(
-  (i) => `  linear += ${dequant(`band_${i}`)} * ${queryUniform(i)};`,
+const embeddingTerms = BAND_INDICES.map(
+  (i) => `  e[${i}] = ${dequant(`band_${i}`)};`,
 ).join("\n");
 
-const [r, g, b] = RGB_BANDS.map((i) => dequant(`band_${i}`));
+const [r, g, b] = RGB_BANDS.map((i) => `e[${i}]`);
 
-// Similarity mode draws nothing until there is a query, so the imagery shows
-// through; then it scores the dot product with the query embedding and
-// highlights pixels whose score clears the threshold.
+// Similarity and classify modes draw nothing until there is a query, so the
+// imagery shows through. Then each pixel is scored against every class
+// vector (one, in similarity mode) and the best score must clear the
+// threshold: similarity highlights by score, classify paints the class.
 const customFrag = `
   uniform float u_mode;
   uniform float u_threshold;
-  uniform float u_hasQuery;
+  uniform float u_count;
 
   if (isnan(band_0)) {
     discard;
   }
 
-  vec3 rgb = clamp((vec3(${r}, ${g}, ${b}) + 0.3) / 0.6, 0.0, 1.0);
+  float e[${NUM_BANDS}];
+${embeddingTerms}
 
   if (u_mode < 0.5) {
+    vec3 rgb = clamp((vec3(${r}, ${g}, ${b}) + 0.3) / 0.6, 0.0, 1.0);
     fragColor = vec4(rgb * opacity, opacity);
-  } else if (u_hasQuery < 0.5) {
+  } else if (u_count < 0.5) {
     discard;
   } else {
-    float linear = 0.0;
-${dotTerms}
-    float score = linear;
-    if (score < u_threshold) {
+${scoreGlsl(NUM_BANDS)}
+    if (best < u_threshold) {
       discard;
     }
-
-    float t = clamp((score - u_threshold) / max(1.0 - u_threshold, 1e-3), 0.0, 1.0);
-    vec4 c = texture(colormap, vec2(t, 0.5));
-    float a = opacity * mix(${MIN_ALPHA}, 1.0, t);
-    fragColor = vec4(c.rgb * a, a);
+    if (u_mode < 1.5) {
+      float t = clamp((best - u_threshold) / max(1.0 - u_threshold, 1e-3), 0.0, 1.0);
+      vec4 c = texture(colormap, vec2(t, 0.5));
+      float a = opacity * mix(${MIN_ALPHA}, 1.0, t);
+      fragColor = vec4(c.rgb * a, a);
+    } else {
+${CLASS_COLOR_GLSL}
+    }
   }
 `;
 
@@ -176,10 +195,31 @@ type Sample = {
 };
 const samples: Sample[] = [];
 
-// Undo restores the state from before each change: a click, Start over, or
-// a change of embeddings.
+// Classify mode: each class has its own examples and counter-examples.
+type LandClass = {
+  id: number;
+  name: string;
+  color: string;
+  samples: Sample[];
+};
+let classes: LandClass[] = [];
+let activeClassId = 0;
+let nextClassId = 1;
+const activeClass = () => classes.find((c) => c.id === activeClassId);
+const allClassSamples = () => classes.flatMap((c) => c.samples);
+
+function newClass(name: string): LandClass {
+  const used = new Set(classes.map((c) => c.color));
+  const color = PALETTE.find((c) => !used.has(c)) ?? PALETTE[classes.length % PALETTE.length];
+  return { id: nextClassId++, name, color, samples: [] };
+}
+
+// Undo restores the state from before each change: a click, Start over, a
+// change of embeddings, or adding or removing a class.
 type Snapshot = {
   samples: Sample[];
+  classes: LandClass[];
+  activeClassId: number;
   dataset: string;
 };
 const undoStack: Snapshot[] = [];
@@ -188,7 +228,12 @@ const MAX_HISTORY = 50;
 let previousDataset = datasetSelect.value;
 
 function pushHistory() {
-  undoStack.push({ samples: [...samples], dataset: previousDataset });
+  undoStack.push({
+    samples: [...samples],
+    classes: classes.map((c) => ({ ...c, samples: [...c.samples] })),
+    activeClassId,
+    dataset: previousDataset,
+  });
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
   undoButton.disabled = false;
 }
@@ -197,16 +242,23 @@ function undo() {
   const previous = undoStack.pop();
   undoButton.disabled = undoStack.length === 0;
   if (!previous) return;
-  for (const { marker } of samples) marker.remove();
+  for (const { marker } of [...samples, ...allClassSamples()]) marker.remove();
   samples.splice(0, samples.length, ...previous.samples);
+  classes = previous.classes;
+  activeClassId = previous.activeClassId;
   for (const { marker } of samples) {
     marker.addTo(map).getElement().hidden = mode() !== "similarity";
   }
+  for (const { marker } of allClassSamples()) {
+    marker.addTo(map).getElement().hidden = mode() !== "classify";
+  }
   datasetSelect.value = previousDataset = previous.dataset;
+  renderClasses();
   applyDataset();
 }
 
-const mode = () => modeSelect.value as Mode;
+const mode = () =>
+  (modeRadios().find((r) => r.checked)?.value ?? "similarity") as Mode;
 const dataset = () => datasetSelect.value as Dataset;
 const minZoom = () => MIN_ZOOM;
 const year = () => Number(yearSelect.value);
@@ -238,28 +290,28 @@ if (shared) {
 }
 counterValue.textContent = counterStrength.value;
 
-function uniforms(): Record<string, number> {
-  const vector = dataset() === "aef" ? similarityQuery() : null;
-  const values: Record<string, number> = {
-    u_mode: MODES[mode()],
-    u_threshold: Number(threshold.value),
-    u_hasQuery: vector ? 1 : 0,
-  };
-  BAND_INDICES.forEach((i) => {
-    values[queryUniform(i)] = vector?.[i] ?? 0;
-  });
-  return values;
+/** The query vectors to score against: the classes', or the one search. */
+function queries(): ClassQuery[] {
+  if (mode() === "classify") {
+    return classes.flatMap((c) => {
+      const vector = queryVector(c.samples);
+      return vector ? [{ vector, color: c.color }] : [];
+    });
+  }
+  const vector = queryVector(samples);
+  return vector ? [{ vector, color: "#ffffff" }] : [];
 }
 
-function tesseraUniforms(): Record<string, number | number[]> {
-  const vector = dataset() === "tessera" ? similarityQuery() : null;
+function layerUniforms(current: Dataset, dims: number) {
   return {
-    u_mode: mode() === "rgb" ? 0 : 1,
+    u_mode: MODES[mode()],
     u_threshold: Number(threshold.value),
-    u_hasQuery: vector ? 1 : 0,
-    u_q: Array.from({ length: TESSERA_BANDS }, (_, i) => vector?.[i] ?? 0),
+    ...classUniforms(dims, dataset() === current ? queries() : []),
   };
 }
+
+const uniforms = () => layerUniforms("aef", NUM_BANDS);
+const tesseraUniforms = () => layerUniforms("tessera", TESSERA_BANDS);
 
 function mean(embeddings: number[][]): number[] {
   const out = new Array(embeddings[0].length).fill(0);
@@ -276,17 +328,18 @@ function mean(embeddings: number[][]): number[] {
 const counterWeight = () => Number(counterStrength.value);
 
 /**
- * The similarity search vector: mean(examples) - counterWeight() x
+ * The search vector for a set of samples: mean(examples) - counterWeight() x
  * mean(counter-examples), a gentler form of geovibes' query. Subtracting
  * counter-examples lowers every score, examples included, so the vector is
  * scaled for the examples to average a score of 1: the threshold is a
  * fraction of how well the examples themselves match. With one example this
- * is a plain cosine.
+ * is a plain cosine. In classify mode each class gets its own vector, so
+ * the scaling also puts the classes' scores on the same footing.
  */
-function similarityQuery(): number[] | null {
-  const pos = samples.filter((s) => s.positive).map((s) => s.embedding);
+function queryVector(from: Sample[]): number[] | null {
+  const pos = from.filter((s) => s.positive).map((s) => s.embedding);
   if (pos.length === 0) return null;
-  const neg = samples.filter((s) => !s.positive).map((s) => s.embedding);
+  const neg = from.filter((s) => !s.positive).map((s) => s.embedding);
   let q = mean(pos);
   if (neg.length) {
     const n = mean(neg);
@@ -538,9 +591,14 @@ function refreshUniforms() {
   tessera.setUniforms(tesseraUniforms());
 }
 
-function addMarker(lngLat: maplibregl.LngLat, kind?: "positive" | "negative") {
+function addMarker(
+  lngLat: maplibregl.LngLat,
+  kind: "positive" | "negative",
+  color?: string,
+) {
   const el = document.createElement("div");
-  el.className = kind ? `sample-marker ${kind}` : "sample-marker";
+  el.className = `sample-marker ${kind}`;
+  if (color) el.style.setProperty("--marker-color", color);
   return new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
 }
 
@@ -552,6 +610,8 @@ $<HTMLElement>("add-mode-label").textContent = touch
 const addsMatch = () =>
   addMode.querySelector<HTMLInputElement>("input:checked")?.value ===
   "positive";
+const positiveLabel = $<HTMLSpanElement>("positive-label");
+const negativeLabel = $<HTMLSpanElement>("negative-label");
 
 const tapOrClick = touch ? "Tap" : "Click";
 const HINTS: Record<Mode, { intro: string; steps: string[] }> = {
@@ -566,6 +626,14 @@ const HINTS: Record<Mode, { intro: string; steps: string[] }> = {
     intro:
       "Three of the embedding dimensions shown as red, green and blue. Similar colors mean similar embeddings.",
     steps: [],
+  },
+  classify: {
+    intro: `Pick a class, then ${tapOrClick.toLowerCase()} spots that are examples of it. Each spot on the map takes the color of the class it matches best.`,
+    steps: [
+      "Give every class a few examples, and some spots that are not that class.",
+      "Rename the classes, change their colors, or add your own.",
+      "Spots that match no class well enough stay clear; lower the threshold to fill them in.",
+    ],
   },
 };
 
@@ -584,19 +652,139 @@ function renderHint(current: Mode) {
 
 function updatePanel() {
   const current = mode();
-  copyLinkButton.hidden = current !== "similarity";
-  counterControls.hidden = current !== "similarity";
+  const classify = current === "classify";
+  copyLinkButton.hidden = current === "rgb";
+  counterControls.hidden = current === "rgb";
   colorbar.hidden = current !== "similarity";
-  addMode.hidden = current !== "similarity";
+  addMode.hidden = current === "rgb";
+  classesBox.hidden = !classify;
+  samplesLabel.hidden = classify;
+  positiveLabel.textContent = classify ? "Example" : "Match";
+  negativeLabel.textContent = classify ? "Not this" : "Not a match";
   renderHint(current);
   const pos = samples.filter((s) => s.positive).length;
   const neg = samples.length - pos;
   samplesLabel.textContent = `${pos} match${pos === 1 ? "" : "es"} · ${neg} not a match`;
-  copyLinkButton.disabled = pos === 0;
+  copyLinkButton.disabled = classify
+    ? !classes.some((c) => c.samples.some((s) => s.positive))
+    : pos === 0;
+  addClassButton.disabled = classes.length >= MAX_CLASSES;
+  for (const c of classes) {
+    const count = classList.querySelector(`[data-count="${c.id}"]`);
+    if (!count) continue;
+    const p = c.samples.filter((s) => s.positive).length;
+    count.textContent = `${p} · ${c.samples.length - p}`;
+  }
 }
 
-async function onSimilarityClick(e: maplibregl.MapMouseEvent) {
+/** Rebuild the class rows: a swatch, an editable name, and sample counts. */
+function renderClasses() {
+  classList.replaceChildren(
+    ...classes.map((c) => {
+      const row = document.createElement("div");
+      row.className = "class-row";
+      row.classList.toggle("active", c.id === activeClassId);
+
+      const pick = document.createElement("input");
+      pick.type = "radio";
+      pick.name = "class";
+      pick.checked = c.id === activeClassId;
+      pick.title = "Clicks add to this class";
+      pick.addEventListener("change", () => {
+        activeClassId = c.id;
+        for (const r of classList.children) {
+          r.classList.toggle("active", r === row);
+        }
+      });
+
+      const color = document.createElement("input");
+      color.type = "color";
+      color.value = c.color;
+      color.title = "Class color";
+      color.addEventListener("input", () => {
+        c.color = color.value;
+        for (const { marker } of c.samples) {
+          marker.getElement().style.setProperty("--marker-color", c.color);
+        }
+        refreshUniforms();
+      });
+
+      const name = document.createElement("input");
+      name.type = "text";
+      name.value = c.name;
+      name.placeholder = "Class name";
+      name.setAttribute("aria-label", "Class name");
+      name.addEventListener("input", () => (c.name = name.value));
+      name.addEventListener("focus", () => {
+        if (!pick.checked) pick.click();
+      });
+
+      const count = document.createElement("span");
+      count.className = "class-count";
+      count.dataset.count = String(c.id);
+      count.title = "Examples · not this class";
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "class-remove";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Remove ${c.name || "class"}`);
+      remove.addEventListener("click", () => {
+        pushHistory();
+        for (const { marker } of c.samples) marker.remove();
+        classes = classes.filter((other) => other !== c);
+        if (activeClassId === c.id) activeClassId = classes[0]?.id ?? 0;
+        renderClasses();
+        refreshUniforms();
+        updatePanel();
+      });
+
+      row.append(pick, color, name, count, remove);
+      return row;
+    }),
+  );
+  updatePanel();
+}
+
+addClassButton.addEventListener("click", () => {
+  if (classes.length >= MAX_CLASSES) return;
+  pushHistory();
+  const added = newClass("");
+  classes.push(added);
+  activeClassId = added.id;
+  renderClasses();
+  classList
+    .querySelector<HTMLInputElement>(".class-row.active input[type=text]")
+    ?.focus();
+});
+
+if (shared?.classes.length) {
+  for (const { name, color, samples: shown } of shared.classes) {
+    const c = newClass(name);
+    c.color = color;
+    c.samples = shown.map(({ lng, lat, positive, embedding }) => ({
+      embedding,
+      positive,
+      marker: addMarker(
+        new maplibregl.LngLat(lng, lat),
+        positive ? "positive" : "negative",
+        color,
+      ),
+    }));
+    classes.push(c);
+  }
+} else {
+  for (const name of ["Forest", "Water", "Roads"]) classes.push(newClass(name));
+}
+activeClassId = classes[0]?.id ?? 0;
+
+async function onSampleClick(e: maplibregl.MapMouseEvent) {
   const positive = addsMatch() !== e.originalEvent.shiftKey;
+  const target = mode() === "classify" ? activeClass() : null;
+  if (mode() === "classify" && !target) {
+    status.textContent = "Add a class first";
+    return;
+  }
   const { lng, lat } = e.lngLat;
   const clicked = dataset();
   const zoneLayer = tessera.layerAt(lng);
@@ -612,10 +800,10 @@ async function onSimilarityClick(e: maplibregl.MapMouseEvent) {
     return;
   }
   pushHistory();
-  samples.push({
+  (target?.samples ?? samples).push({
     embedding,
     positive,
-    marker: addMarker(e.lngLat, positive ? "positive" : "negative"),
+    marker: addMarker(e.lngLat, positive ? "positive" : "negative", target?.color),
   });
   refreshUniforms();
   updatePanel();
@@ -625,7 +813,7 @@ map.on("click", async (e) => {
   if (map.getZoom() < minZoom() || mode() === "rgb") return;
   status.textContent = "Reading embedding…";
   try {
-    await onSimilarityClick(e);
+    await onSampleClick(e);
     if (status.textContent === "Reading embedding…") {
       status.textContent = "";
     }
@@ -640,9 +828,18 @@ function clearSamples() {
   samples.length = 0;
 }
 
+/** Drop the classes' samples; the classes themselves stay. */
+function clearClassSamples() {
+  for (const c of classes) {
+    for (const { marker } of c.samples) marker.remove();
+    c.samples = [];
+  }
+}
+
 clearButton.addEventListener("click", () => {
   pushHistory();
-  clearSamples();
+  if (mode() === "classify") clearClassSamples();
+  else clearSamples();
   refreshUniforms();
   updatePanel();
 });
@@ -660,9 +857,11 @@ document.addEventListener("keydown", (e) => {
     undo();
   }
 });
-modeSelect.addEventListener("change", () => {
+modeSwitch.addEventListener("change", () => {
   for (const s of samples)
     s.marker.getElement().hidden = mode() !== "similarity";
+  for (const s of allClassSamples())
+    s.marker.getElement().hidden = mode() !== "classify";
   refreshUniforms();
   updatePanel();
   updateCursor();
@@ -724,6 +923,7 @@ datasetSelect.addEventListener("change", () => {
   pushHistory();
   previousDataset = datasetSelect.value;
   clearSamples();
+  clearClassSamples();
   applyDataset();
 });
 
@@ -747,32 +947,45 @@ if (shared) {
       ),
     });
   }
-  refreshUniforms();
 }
+for (const s of samples) s.marker.getElement().hidden = mode() !== "similarity";
+for (const s of allClassSamples())
+  s.marker.getElement().hidden = mode() !== "classify";
+refreshUniforms();
+renderClasses();
 
 copyLinkButton.addEventListener("click", async () => {
   const center = map.getCenter();
+  const toShared = (from: Sample[]) =>
+    from.map(({ embedding, positive, marker }) => {
+      const { lng, lat } = marker.getLngLat();
+      return { lng, lat, positive, embedding };
+    });
+  const classify = mode() === "classify";
   const encoded = encodeSearch({
+    mode: classify ? "classify" : "similarity",
     center: [center.lng, center.lat],
     zoom: map.getZoom(),
     threshold: Number(threshold.value),
     counterWeight: counterWeight(),
     year: year(),
     dataset: dataset(),
-    samples: samples.map(({ embedding, positive, marker }) => {
-      const { lng, lat } = marker.getLngLat();
-      return { lng, lat, positive, embedding };
-    }),
+    samples: classify ? [] : toShared(samples),
+    classes: classify
+      ? classes.map((c) => ({
+          name: c.name,
+          color: c.color,
+          samples: toShared(c.samples),
+        }))
+      : [],
   });
   const url = `${location.origin}${location.pathname}${SHARE_PREFIX}${encoded}`;
   window.history.replaceState(null, "", url);
   try {
     await navigator.clipboard.writeText(url);
-    status.textContent = "Link copied. Anyone who opens it sees this search.";
+    status.textContent = `Link copied. Anyone who opens it sees this ${classify ? "classification" : "search"}.`;
   } catch {
     status.textContent = "The link is in the address bar; copy it from there.";
   }
 });
-updatePanel();
-
 Object.assign(window, { map, layer, tessera });

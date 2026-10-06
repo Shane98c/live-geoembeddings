@@ -17,30 +17,36 @@
         <h1>Live Geoembeddings</h1>
         <button id="panel-toggle" type="button" aria-expanded="true">Settings</button>
       </div>
+      <fieldset id="mode">
+        <legend class="visually-hidden">View</legend>
+        <div class="segmented">
+          <label><input type="radio" name="mode" value="similarity" checked />Similar</label>
+          <label><input type="radio" name="mode" value="classify" />Classify</label>
+          <label><input type="radio" name="mode" value="rgb" />Colors</label>
+        </div>
+      </fieldset>
       <div id="hint" class="hint"></div>
+
+      <fieldset id="classes" hidden>
+        <legend>Classes</legend>
+        <div id="class-list"></div>
+        <button id="add-class" type="button">Add class</button>
+      </fieldset>
 
       <fieldset id="add-mode">
         <legend id="add-mode-label">Clicks add</legend>
         <div class="segmented">
           <label>
             <input type="radio" name="add-kind" value="positive" checked />
-            <span class="dot positive" aria-hidden="true"></span>Match
+            <span class="dot positive" aria-hidden="true"></span><span id="positive-label">Match</span>
           </label>
           <label>
             <input type="radio" name="add-kind" value="negative" />
-            <span class="dot negative" aria-hidden="true"></span>Not a match
+            <span class="dot negative" aria-hidden="true"></span><span id="negative-label">Not a match</span>
           </label>
         </div>
         <p id="shift-note" class="hint">Shift-click adds the other kind.</p>
       </fieldset>
-
-      <label class="setting">
-        View
-        <select id="mode">
-          <option value="similarity" selected>Find similar spots</option>
-          <option value="rgb">Embeddings as color</option>
-        </select>
-      </label>
 
       <label class="setting">
         Embeddings

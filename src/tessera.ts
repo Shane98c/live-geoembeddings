@@ -1,6 +1,7 @@
 import type maplibregl from "maplibre-gl";
 import { ZarrLayer } from "@carbonplan/zarr-layer";
 import { MIN_ALPHA } from "./highlight";
+import { CLASS_COLOR_GLSL, scoreGlsl } from "./classify";
 
 /**
  * TESSERA v1 embeddings (University of Cambridge) on Source Cooperative: 128
@@ -26,18 +27,16 @@ const selector = (year: number) => ({
 // no data is all zeros: a vector of length 0.
 const component = (i: number) => `(isnan(band_${i}) ? 0.0 : band_${i})`;
 const terms = BAND_INDICES.map(
-  (i) =>
-    `  v = ${component(i)};\n  dotq += v * u_q[${i}];\n  len2 += v * v;`,
+  (i) => `  e[${i}] = ${component(i)};\n  len2 += e[${i}] * e[${i}];`,
 ).join("\n");
 
-// u_mode: 0 = embeddings as color, 1 = similarity.
+// u_mode: 0 = embeddings as color, 1 = similarity, 2 = classify.
 const customFrag = `
   uniform float u_mode;
   uniform float u_threshold;
-  uniform float u_hasQuery;
+  uniform float u_count;
 
-  float v;
-  float dotq = 0.0;
+  float e[${TESSERA_BANDS}];
   float len2 = 0.0;
 ${terms}
   if (len2 == 0.0) {
@@ -46,19 +45,23 @@ ${terms}
   float len = sqrt(len2);
 
   if (u_mode < 0.5) {
-    vec3 rgb = clamp(vec3(${component(0)}, ${component(1)}, ${component(2)}) / len * 1.5 + 0.5, 0.0, 1.0);
+    vec3 rgb = clamp(vec3(e[0], e[1], e[2]) / len * 1.5 + 0.5, 0.0, 1.0);
     fragColor = vec4(rgb * opacity, opacity);
-  } else if (u_hasQuery < 0.5) {
+  } else if (u_count < 0.5) {
     discard;
   } else {
-    float score = dotq / len;
-    if (score < u_threshold) {
+${scoreGlsl(TESSERA_BANDS, "len")}
+    if (best < u_threshold) {
       discard;
     }
-    float t = clamp((score - u_threshold) / max(1.0 - u_threshold, 1e-3), 0.0, 1.0);
-    vec4 c = texture(colormap, vec2(t, 0.5));
-    float a = opacity * mix(${MIN_ALPHA}, 1.0, t);
-    fragColor = vec4(c.rgb * a, a);
+    if (u_mode < 1.5) {
+      float t = clamp((best - u_threshold) / max(1.0 - u_threshold, 1e-3), 0.0, 1.0);
+      vec4 c = texture(colormap, vec2(t, 0.5));
+      float a = opacity * mix(${MIN_ALPHA}, 1.0, t);
+      fragColor = vec4(c.rgb * a, a);
+    } else {
+${CLASS_COLOR_GLSL}
+    }
   }
 `;
 
@@ -68,7 +71,7 @@ type Style = {
   opacity: number;
   minzoom: number;
   customFrag?: string;
-  uniforms: Record<string, number | number[]>;
+  uniforms: Record<string, number | number[] | Float32Array>;
   onLoadingStateChange: (state: { loading: boolean; error?: Error | null }) => void;
 };
 
@@ -134,7 +137,7 @@ export class TesseraLayers {
     return this.visible ? this.layers.get(zoneFor(lng)) : undefined;
   }
 
-  setUniforms(uniforms: Record<string, number | number[]>) {
+  setUniforms(uniforms: Record<string, number | number[] | Float32Array>) {
     for (const layer of this.layers.values()) layer.setUniforms(uniforms);
   }
 

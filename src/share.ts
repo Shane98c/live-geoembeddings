@@ -30,7 +30,9 @@ export interface SharedSearch {
   classes: SharedClass[];
 }
 
-const VERSION = 2;
+// Version 3 marks the switch to TESSERA v1.1, whose embeddings do not match
+// the v1 ones that earlier TESSERA links carry.
+const VERSION = 3;
 const DATASETS: Dataset[] = ["aef", "tessera"];
 const MODES: SharedMode[] = ["similarity", "classify"];
 const BANDS: Record<Dataset, number> = { aef: NUM_BANDS, tessera: TESSERA_BANDS };
@@ -182,9 +184,9 @@ export function decodeSearch(text: string): SharedSearch | null {
   try {
     const r = new Reader(fromBase64Url(text));
     const version = r.u8();
-    if (version !== 1 && version !== VERSION) return null;
+    if (version < 1 || version > VERSION) return null;
     const dataset = DATASETS[r.u8()];
-    if (!dataset) return null;
+    if (!dataset || (dataset === "tessera" && version < 3)) return null;
     const year = r.u16();
     const threshold = r.u16() / 10000;
     const counterWeight = r.u8() / 100;

@@ -30,7 +30,9 @@ but is not matched to the year.
 - **Colors.** Three embedding dimensions as RGB.
 
 **Copy link** encodes the clicks, their embeddings, the classes, the
-threshold and the view in the URL.
+threshold and the view in the URL. TESSERA links made before the switch to
+v1.1 carry v1 embeddings, which do not match v1.1, so they open the default
+view instead.
 
 ## Embeddings
 
@@ -38,15 +40,18 @@ Both load at zoom 13 and closer; a laptop-sized view is roughly 125 MB of
 AlphaEarth or 400 MB of TESSERA.
 
 - **AlphaEarth Foundations** (Google): 64 dimensions per 10 m pixel.
-- **TESSERA** (University of Cambridge): 128 dimensions per 10 m pixel,
-  stored per UTM zone. Similarity is the cosine
-  of the raw int8 values, so the per-pixel scales are not needed.
+- **TESSERA v1.1** (University of Cambridge): 128 dimensions per 10 m pixel,
+  from dClimate's wall-to-wall global run (`zarr/v1.1-dclimate`), stored per
+  UTM zone. Similarity is the cosine of the raw int8 values, so the
+  per-pixel scales are not needed.
 
 ## How it works
 
 - **Loading.** Embeddings are read from Zarr v3 stores on Source Cooperative
   with [zarr-layer](https://github.com/carbonplan/zarr-layer), a MapLibre
-  custom layer.
+  custom layer. TESSERA is read straight from the S3 bucket behind Source
+  Cooperative, as [GeoTessera](https://github.com/ucam-eo/geotessera) does,
+  since the `data.source.coop` gateway can throttle that volume of requests.
 - **Rendering.** A fragment shader scores every pixel on screen against the
   search vector, or against every class's vector. Clicks only change shader
   uniforms, so no data is refetched. The class vectors share one uniform
@@ -61,7 +66,7 @@ AlphaEarth or 400 MB of TESSERA.
 | Data | Source | License |
 | --- | --- | --- |
 | AlphaEarth embeddings, 2017-2025 | [tge-labs/aef-mosaic](https://source.coop/tge-labs/aef-mosaic) | CC-BY 4.0, produced by Google and Google DeepMind |
-| TESSERA embeddings, 2017-2025 | [tessera/tessera](https://source.coop/tessera/tessera) | University of Cambridge |
+| TESSERA v1.1 embeddings, 2017-2025 | [tessera/tessera](https://source.coop/tessera/tessera), `zarr/v1.1-dclimate` | University of Cambridge; global run by dClimate |
 | Sentinel-2 imagery, yearly | [EOX Sentinel-2 cloudless](https://s2maps.eu) (no 2017 mosaic; 2018 is shown) | CC BY-NC-SA 4.0, contains modified Copernicus Sentinel data |
 | Aerial imagery | [USGS The National Map](https://basemap.nationalmap.gov/) | Public domain |
 | Roads and place names | [OpenFreeMap](https://openfreemap.org) | © OpenMapTiles, OpenStreetMap (ODbL) |

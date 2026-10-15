@@ -4,13 +4,14 @@ import { MIN_ALPHA } from "./highlight";
 import { CLASS_COLOR_GLSL, scoreGlsl } from "./classify";
 
 /**
- * TESSERA v1 embeddings (University of Cambridge) on Source Cooperative: 128
- * int8 dimensions per 10 m pixel, 2017-2025, one Zarr group per UTM zone.
- * Each pixel's vector has its own scale (a separate `scales` array), which
- * cosine similarity divides out, so only the raw int8 values are read.
+ * TESSERA v1.1 embeddings (University of Cambridge) on Source Cooperative,
+ * from dClimate's wall-to-wall global run: 128 int8 dimensions per 10 m
+ * pixel, 2017-2025, one Zarr group per UTM zone. Each pixel's vector has its
+ * own scale (a separate `scales` array), which cosine similarity divides
+ * out, so only the raw int8 values are read.
  */
 export const TESSERA_BANDS = 128;
-const STORE = "https://data.source.coop/tessera/tessera/zarr/v1";
+const STORE = "https://data.source.coop/tessera/tessera/zarr/v1.1-dclimate";
 const YEAR_ORIGIN = 2017;
 const BAND_INDICES = Array.from({ length: TESSERA_BANDS }, (_, i) => i);
 

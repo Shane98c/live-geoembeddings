@@ -49,7 +49,9 @@ AlphaEarth or 400 MB of TESSERA.
 
 - **Loading.** Embeddings are read from Zarr v3 stores on Source Cooperative
   with [zarr-layer](https://github.com/carbonplan/zarr-layer), a MapLibre
-  custom layer.
+  custom layer. TESSERA is read straight from the S3 bucket behind Source
+  Cooperative, as [GeoTessera](https://github.com/ucam-eo/geotessera) does,
+  since the `data.source.coop` gateway can throttle that volume of requests.
 - **Rendering.** A fragment shader scores every pixel on screen against the
   search vector, or against every class's vector. Clicks only change shader
   uniforms, so no data is refetched. The class vectors share one uniform

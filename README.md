@@ -10,10 +10,10 @@ Live site: https://shane98c.github.io/live-geoembeddings/
 ## Modes
 
 Clicks add a match (a circle) or, with the switch set to "Not a match" or
-Shift held, a spot that is not a match (an X). Cmd/Ctrl+Z undoes the last
-change. The year picker (2017-2025) switches both
-the embeddings and the Sentinel-2 imagery; aerial imagery is also available
-but is not matched to the year.
+Shift held, a spot that is not a match (an X). Click or tap a point again to
+remove it. Cmd/Ctrl+Z undoes the last change. The year picker (2017-2025)
+switches both the embeddings and the Sentinel-2 imagery; aerial imagery is
+also available but is not matched to the year.
 
 - **Similar** (default). Scores each pixel by its similarity to a
   search vector: the average of your matches, minus the average of the spots

@@ -598,8 +598,29 @@ function addMarker(
 ) {
   const el = document.createElement("div");
   el.className = `sample-marker ${kind}`;
+  el.title = touch ? "Tap to remove" : "Click to remove";
+  const hitArea = document.createElement("span");
+  hitArea.className = "sample-marker-hit-area";
+  el.append(hitArea);
   if (color) el.style.setProperty("--marker-color", color);
-  return new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
+  const marker = new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
+  el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const lists =
+      mode() === "similarity"
+        ? [samples]
+        : mode() === "classify"
+          ? classes.map((c) => c.samples)
+          : [];
+    const list = lists.find((from) => from.some((s) => s.marker === marker));
+    if (!list) return;
+    pushHistory();
+    list.splice(list.findIndex((s) => s.marker === marker), 1);
+    marker.remove();
+    refreshUniforms();
+    updatePanel();
+  });
+  return marker;
 }
 
 // Whether a click adds a match or not a match. Shift-click adds the other.
@@ -620,6 +641,7 @@ const HINTS: Record<Mode, { intro: string; steps: string[] }> = {
     steps: [
       "Add more matches to sharpen what it looks for.",
       "Add spots that are not a match to steer it away from them.",
+      `${tapOrClick} a point again to remove it.`,
     ],
   },
   rgb: {
@@ -633,6 +655,7 @@ const HINTS: Record<Mode, { intro: string; steps: string[] }> = {
       "Give every class a few examples, and some spots that are not that class.",
       "Rename the classes, change their colors, or add your own.",
       "Spots that match no class well enough stay clear; lower the threshold to fill them in.",
+      `${tapOrClick} a point again to remove it.`,
     ],
   },
 };

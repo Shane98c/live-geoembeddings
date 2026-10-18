@@ -842,6 +842,7 @@ clearButton.addEventListener("click", () => {
   pushHistory();
   if (mode() === "classify") clearClassSamples();
   else clearSamples();
+  addMode.querySelector<HTMLInputElement>("input[value=positive]")!.checked = true;
   refreshUniforms();
   updatePanel();
 });

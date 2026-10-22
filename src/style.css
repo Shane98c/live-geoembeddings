@@ -369,6 +369,18 @@ body {
 .sample-marker {
   width: 16px;
   height: 16px;
+  cursor: pointer;
+}
+
+@media (hover: none) {
+  .sample-marker-hit-area {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 36px;
+    height: 36px;
+    transform: translate(-50%, -50%);
+  }
 }
 
 /* Shape, not color, tells the two kinds apart: a match is a ring, a spot

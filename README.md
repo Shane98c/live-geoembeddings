@@ -27,7 +27,11 @@ also available but is not matched to the year.
   above, and every pixel takes the color of the class that scores it
   highest. Pixels that no class scores above the match threshold stay clear.
   The limit is six classes on most devices (see Rendering below).
-- **Colors.** Three embedding dimensions as RGB.
+- **Colors.** Three embedding dimensions as RGB, or any one dimension on a
+  colormap (greyscale, viridis, magma or blue to red) with a key. The
+  colormap spans -0.3 to 0.3 for AlphaEarth and -0.2 to 0.2 for TESSERA
+  (TESSERA vectors are scaled to unit length first), roughly the 1st to
+  99th percentile of values.
 
 **Copy link** encodes the clicks, their embeddings, the classes, the
 threshold and the view in the URL. TESSERA links made before the switch to

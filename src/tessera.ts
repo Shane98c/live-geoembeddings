@@ -2,6 +2,7 @@ import type maplibregl from "maplibre-gl";
 import { ZarrLayer } from "@carbonplan/zarr-layer";
 import { MIN_ALPHA } from "./highlight";
 import { CLASS_COLOR_GLSL, scoreGlsl } from "./classify";
+import { dimensionGlsl } from "./colormaps";
 
 /**
  * TESSERA v1.1 embeddings (University of Cambridge) on Source Cooperative,
@@ -15,6 +16,11 @@ import { CLASS_COLOR_GLSL, scoreGlsl } from "./classify";
  * Path style, since the dotted bucket name breaks virtual-host TLS.
  */
 export const TESSERA_BANDS = 128;
+// The dimensions the false-color view shows as red, green and blue.
+export const TESSERA_RGB_BANDS = [0, 1, 2];
+// The colormap's span for one unit-length dimension: about the 1st to 99th
+// percentile.
+export const TESSERA_DIMENSION_RANGE = 0.2;
 const STORE =
   "https://s3.us-west-2.amazonaws.com/us-west-2.opendata.source.coop/tessera/tessera/zarr/v1.1-dclimate";
 const YEAR_ORIGIN = 2017;
@@ -36,9 +42,13 @@ const terms = BAND_INDICES.map(
   (i) => `  e[${i}] = ${component(i)};\n  len2 += e[${i}] * e[${i}];`,
 ).join("\n");
 
-// u_mode: 0 = embeddings as color, 1 = similarity, 2 = classify.
+const [r, g, b] = TESSERA_RGB_BANDS.map((i) => `e[${i}]`);
+
+// u_mode: 0 = embeddings as color, 1 = similarity, 2 = classify. In the
+// first, u_band picks one dimension for the colormap, or is -1 for RGB.
 const customFrag = `
   uniform float u_mode;
+  uniform float u_band;
   uniform float u_threshold;
   uniform float u_count;
 
@@ -51,8 +61,12 @@ ${terms}
   float len = sqrt(len2);
 
   if (u_mode < 0.5) {
-    vec3 rgb = clamp(vec3(e[0], e[1], e[2]) / len * 1.5 + 0.5, 0.0, 1.0);
-    fragColor = vec4(rgb * opacity, opacity);
+    if (u_band < 0.0) {
+      vec3 rgb = clamp(vec3(${r}, ${g}, ${b}) / len * 1.5 + 0.5, 0.0, 1.0);
+      fragColor = vec4(rgb * opacity, opacity);
+    } else {
+${dimensionGlsl("e[int(u_band)] / len", TESSERA_DIMENSION_RANGE)}
+    }
   } else if (u_count < 0.5) {
     discard;
   } else {
@@ -145,6 +159,10 @@ export class TesseraLayers {
 
   setUniforms(uniforms: Record<string, number | number[] | Float32Array>) {
     for (const layer of this.layers.values()) layer.setUniforms(uniforms);
+  }
+
+  setColormap(colormap: string[]) {
+    for (const layer of this.layers.values()) layer.setColormap(colormap);
   }
 
   setOpacity(opacity: number) {

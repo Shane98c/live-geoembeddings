@@ -70,7 +70,17 @@
       </label>
       <p id="year-note" class="hint setting" hidden></p>
 
-      <label class="setting">
+      <label id="dimension-controls" class="setting">
+        Show
+        <select id="dimension"></select>
+      </label>
+
+      <label id="colormap-controls" class="setting">
+        Colormap
+        <select id="colormap"></select>
+      </label>
+
+      <label id="threshold-controls" class="setting">
         Match threshold <output id="threshold-value"></output>
         <input id="threshold" type="range" min="0.3" max="1" step="0.005" value="0.8" />
       </label>
@@ -78,7 +88,8 @@
         <div class="colorbar-ramp"></div>
         <div class="colorbar-labels">
           <span id="colorbar-low"></span>
-          <span>Best match</span>
+          <span id="colorbar-mid"></span>
+          <span id="colorbar-high"></span>
         </div>
       </div>
 

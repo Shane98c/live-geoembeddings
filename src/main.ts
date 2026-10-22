@@ -8,7 +8,18 @@ import {
   type Dataset,
 } from "./share";
 import { COLORMAP, MIN_ALPHA } from "./highlight";
-import { readTesseraPoint, TESSERA_BANDS, TesseraLayers } from "./tessera";
+import {
+  readTesseraPoint,
+  TESSERA_BANDS,
+  TESSERA_DIMENSION_RANGE,
+  TESSERA_RGB_BANDS,
+  TesseraLayers,
+} from "./tessera";
+import {
+  DIMENSION_COLORMAPS,
+  dimensionGlsl,
+  type ColormapName,
+} from "./colormaps";
 import {
   CLASS_COLOR_GLSL,
   classUniforms,
@@ -26,6 +37,8 @@ const LATEST_YEAR = 2025;
 const MIN_ZOOM = 13;
 // Band indices for the false-color view, following Google's AEF examples.
 const RGB_BANDS = [1, 16, 9];
+// The colormap's span for one dimension: about the 1st to 99th percentile.
+const DIMENSION_RANGE = 0.3;
 
 // Roads and place names from OpenStreetMap, drawn above the data layers.
 const NAME = ["coalesce", ["get", "name:en"], ["get", "name"]];
@@ -126,6 +139,17 @@ for (let y = LATEST_YEAR; y >= YEAR_ORIGIN; y--)
 const counterControls = $<HTMLLabelElement>("counter-controls");
 const counterStrength = $<HTMLInputElement>("counter-strength");
 const counterValue = $<HTMLOutputElement>("counter-value");
+const dimensionControls = $<HTMLLabelElement>("dimension-controls");
+const dimensionSelect = $<HTMLSelectElement>("dimension");
+const colormapControls = $<HTMLLabelElement>("colormap-controls");
+const colormapSelect = $<HTMLSelectElement>("colormap");
+for (const [name, { label }] of Object.entries(DIMENSION_COLORMAPS))
+  colormapSelect.add(new Option(label, name));
+const thresholdControls = $<HTMLLabelElement>("threshold-controls");
+const colorbar = $<HTMLDivElement>("colorbar");
+const colorbarLow = $<HTMLSpanElement>("colorbar-low");
+const colorbarMid = $<HTMLSpanElement>("colorbar-mid");
+const colorbarHigh = $<HTMLSpanElement>("colorbar-high");
 const classesBox = $<HTMLFieldSetElement>("classes");
 const classList = $<HTMLDivElement>("class-list");
 const addClassButton = $<HTMLButtonElement>("add-class");
@@ -151,12 +175,15 @@ const embeddingTerms = BAND_INDICES.map(
 
 const [r, g, b] = RGB_BANDS.map((i) => `e[${i}]`);
 
-// Similarity and classify modes draw nothing until there is a query, so the
-// imagery shows through. Then each pixel is scored against every class
-// vector (one, in similarity mode) and the best score must clear the
-// threshold: similarity highlights by score, classify paints the class.
+// The colors view shows three dimensions as RGB (u_band -1) or one
+// dimension on a colormap. Similarity and classify modes draw nothing until
+// there is a query, so the imagery shows through. Then each pixel is scored
+// against every class vector (one, in similarity mode) and the best score
+// must clear the threshold: similarity highlights by score, classify paints
+// the class.
 const customFrag = `
   uniform float u_mode;
+  uniform float u_band;
   uniform float u_threshold;
   uniform float u_count;
 
@@ -168,8 +195,12 @@ const customFrag = `
 ${embeddingTerms}
 
   if (u_mode < 0.5) {
-    vec3 rgb = clamp((vec3(${r}, ${g}, ${b}) + 0.3) / 0.6, 0.0, 1.0);
-    fragColor = vec4(rgb * opacity, opacity);
+    if (u_band < 0.0) {
+      vec3 rgb = clamp((vec3(${r}, ${g}, ${b}) + 0.3) / 0.6, 0.0, 1.0);
+      fragColor = vec4(rgb * opacity, opacity);
+    } else {
+${dimensionGlsl("e[int(u_band)]", DIMENSION_RANGE)}
+    }
   } else if (u_count < 0.5) {
     discard;
   } else {
@@ -302,9 +333,41 @@ function queries(): ClassQuery[] {
   return vector ? [{ vector, color: "#ffffff" }] : [];
 }
 
+/** The dimension the colors view shows on a colormap, or -1 for RGB. */
+const shownBand = () => Number(dimensionSelect.value);
+
+const rgbBands = (d: Dataset) => (d === "aef" ? RGB_BANDS : TESSERA_RGB_BANDS);
+const datasetBands = (d: Dataset) => (d === "aef" ? NUM_BANDS : TESSERA_BANDS);
+const dimensionRange = (d: Dataset) =>
+  d === "aef" ? DIMENSION_RANGE : TESSERA_DIMENSION_RANGE;
+
+/** List RGB and every dimension of the current embeddings, keeping the pick. */
+function renderDimensions() {
+  const previous = dimensionSelect.options.length ? shownBand() : -1;
+  const dims = datasetBands(dataset());
+  dimensionSelect.replaceChildren(
+    new Option(`Three dimensions as RGB (${rgbBands(dataset()).join(", ")})`, "-1"),
+    ...Array.from({ length: dims }, (_, i) => new Option(`Dimension ${i}`, String(i))),
+  );
+  dimensionSelect.value = String(previous < dims ? previous : -1);
+}
+renderDimensions();
+
+/** The similarity ramp, or in the colors view the chosen colormap. */
+const currentColormap = () =>
+  mode() === "rgb"
+    ? DIMENSION_COLORMAPS[colormapSelect.value as ColormapName].texels
+    : COLORMAP;
+
+function applyColormap() {
+  layer.setColormap(currentColormap());
+  tessera.setColormap(currentColormap());
+}
+
 function layerUniforms(current: Dataset, dims: number) {
   return {
     u_mode: MODES[mode()],
+    u_band: shownBand() < dims ? shownBand() : -1,
     u_threshold: Number(threshold.value),
     ...classUniforms(dims, dataset() === current ? queries() : []),
   };
@@ -401,7 +464,7 @@ function setLayerLoading(id: string, loading: boolean) {
 
 const aefStyle = (id: string) => ({
   clim: [0, 1] as [number, number],
-  colormap: COLORMAP,
+  colormap: currentColormap(),
   opacity: Number(opacity.value),
   customFrag,
   uniforms: uniforms(),
@@ -521,6 +584,7 @@ const tessera = new TesseraLayers(
 /** Show the chosen dataset's layers and hide the other's. */
 function applyDataset() {
   const current = dataset();
+  renderDimensions();
   if (!map.getLayer("aef")) return;
   map.setLayoutProperty(
     "aef",
@@ -647,7 +711,7 @@ const HINTS: Record<Mode, { intro: string; steps: string[] }> = {
   rgb: {
     intro:
       "Three of the embedding dimensions shown as red, green and blue. Similar colors mean similar embeddings.",
-    steps: [],
+    steps: ["Pick one dimension under Show to see its values on a colormap."],
   },
   classify: {
     intro: `Pick a class, then ${tapOrClick.toLowerCase()} spots that are examples of it. Each spot on the map takes the color of the class it matches best.`,
@@ -660,8 +724,15 @@ const HINTS: Record<Mode, { intro: string; steps: string[] }> = {
   },
 };
 
+const ONE_DIMENSION_HINT = {
+  intro:
+    "One embedding dimension on a colormap. The key below shows the value each color stands for.",
+  steps: [],
+};
+
 function renderHint(current: Mode) {
-  const { intro, steps } = HINTS[current];
+  const { intro, steps } =
+    current === "rgb" && shownBand() >= 0 ? ONE_DIMENSION_HINT : HINTS[current];
   const p = document.createElement("p");
   p.textContent = intro;
   const ol = document.createElement("ol");
@@ -678,7 +749,12 @@ function updatePanel() {
   const classify = current === "classify";
   copyLinkButton.hidden = current === "rgb";
   counterControls.hidden = current === "rgb";
-  colorbar.hidden = current !== "similarity";
+  thresholdControls.hidden = current === "rgb";
+  dimensionControls.hidden = current !== "rgb";
+  colormapControls.hidden = current !== "rgb" || shownBand() < 0;
+  colorbar.hidden =
+    current === "classify" || (current === "rgb" && shownBand() < 0);
+  updateColorbar();
   addMode.hidden = current === "rgb";
   classesBox.hidden = !classify;
   samplesLabel.hidden = classify;
@@ -888,28 +964,50 @@ modeSwitch.addEventListener("change", () => {
     s.marker.getElement().hidden = mode() !== "similarity";
   for (const s of allClassSamples())
     s.marker.getElement().hidden = mode() !== "classify";
+  applyColormap();
   refreshUniforms();
   updatePanel();
   updateCursor();
 });
 
-const colorbar = $<HTMLDivElement>("colorbar");
-const colorbarLow = $<HTMLSpanElement>("colorbar-low");
+dimensionSelect.addEventListener("change", () => {
+  refreshUniforms();
+  updatePanel();
+});
+colormapSelect.addEventListener("change", () => {
+  applyColormap();
+  updateColorbar();
+});
 
-/** The colormap with the shader's opacity fade, as a CSS gradient. */
-function colorbarRamp(): string {
-  const stops = COLORMAP.map((hex, i) => {
-    const t = i / (COLORMAP.length - 1);
-    const alpha = Number(opacity.value) * (MIN_ALPHA + (1 - MIN_ALPHA) * t);
+/** Colormap stops at the shader's opacity, as a CSS gradient. */
+function colorbarRamp(stops: string[], alpha: (t: number) => number): string {
+  const colors = stops.map((hex, i) => {
+    const t = i / (stops.length - 1);
     const [r, g, b] = [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16));
-    return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)}) ${(t * 100).toFixed(0)}%`;
+    return `rgba(${r}, ${g}, ${b}, ${alpha(t).toFixed(2)}) ${(t * 100).toFixed(0)}%`;
   });
-  return `linear-gradient(to right, ${stops.join(", ")})`;
+  return `linear-gradient(to right, ${colors.join(", ")})`;
 }
 
+/** The key for the similarity highlight, or for one dimension's values. */
 function updateColorbar() {
-  colorbar.style.setProperty("--ramp", colorbarRamp());
+  const shown = Number(opacity.value);
+  if (mode() === "rgb") {
+    const { stops } = DIMENSION_COLORMAPS[colormapSelect.value as ColormapName];
+    colorbar.style.setProperty("--ramp", colorbarRamp(stops, () => shown));
+    const range = dimensionRange(dataset());
+    colorbarLow.textContent = `−${range}`;
+    colorbarMid.textContent = "0";
+    colorbarHigh.textContent = String(range);
+    return;
+  }
+  colorbar.style.setProperty(
+    "--ramp",
+    colorbarRamp(COLORMAP, (t) => shown * (MIN_ALPHA + (1 - MIN_ALPHA) * t)),
+  );
   colorbarLow.textContent = `Threshold ${Number(threshold.value).toFixed(2)}`;
+  colorbarMid.textContent = "";
+  colorbarHigh.textContent = "Best match";
 }
 
 threshold.addEventListener("input", () => {
